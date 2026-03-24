@@ -751,6 +751,31 @@
     color: var(--accent-review);
     animation: pulse 1.5s infinite;
   }
+
+  /* Zip download card */
+  .zip-card {
+    margin-top: 12px;
+    border: 1px solid rgba(103,232,249,0.3);
+    border-radius: 10px;
+    overflow: hidden;
+    background: rgba(103,232,249,0.04);
+  }
+  .zip-card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: rgba(103,232,249,0.07);
+  }
+  .zip-card-body {
+    padding: 10px 14px;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
   .issue-preview {
     display: flex;
     flex-direction: column;
@@ -998,6 +1023,7 @@
     to   { opacity: 1; transform: translateY(0); }
   }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
 
@@ -1181,6 +1207,12 @@ const STACKS = {
       review:    'Dart · Rebuilds · Leaks · Perf',
       fullstack: 'Firebase · Supabase · CI/CD · APIs',
     },
+    agentSuggestions: {
+      coding:    ['Write a Riverpod provider', 'Implement a BLoC event', 'Create a custom Flutter widget'],
+      design:    ['Build an animated bottom nav', 'Design a Material 3 card', 'Create a shimmer loading skeleton'],
+      review:    ['Review this widget build()', 'Check my BLoC implementation', 'PR#1 — review latest PR'],
+      fullstack: ['Design a Flutter + Supabase app', 'Plan a Firebase Auth flow', 'Set up Codemagic CI/CD'],
+    },
     ciWorkflow: `name: Flutter CI
 on:
   pull_request:
@@ -1233,6 +1265,12 @@ Warnings: null-safety gotchas, breaking API changes, platform-specific issues.`
       design:    'Tailwind · shadcn/ui · Framer Motion',
       review:    'TSX · Stale closures · Re-renders',
       fullstack: 'React Query · Prisma · Vercel',
+    },
+    agentSuggestions: {
+      coding:    ['Write a custom React hook', 'Implement React Query mutation', 'Create a Zustand store'],
+      design:    ['Build a shadcn/ui modal', 'Create a Tailwind form component', 'Add Framer Motion animation'],
+      review:    ['Review my useEffect deps', 'Check for re-render issues', 'PR#1 — review latest PR'],
+      fullstack: ['Set up React Query + Axios', 'Plan a Vite + tRPC stack', 'Configure Vercel deployment'],
     },
     ciWorkflow: `name: React CI
 on:
@@ -1287,6 +1325,12 @@ Warnings: hook rules violations, circular dependencies, bundle size impacts, bre
       review:    'Server/Client · Suspense · Cache',
       fullstack: 'Route Handlers · Prisma · Vercel',
     },
+    agentSuggestions: {
+      coding:    ['Write a Server Action', 'Create a Route Handler', 'Implement ISR with revalidate'],
+      design:    ['Build a Server Component page', 'Add next/image optimisation', 'Create a loading.tsx skeleton'],
+      review:    ['Review Server/Client boundaries', 'Check Suspense usage', 'PR#1 — review latest PR'],
+      fullstack: ['Set up Prisma + Neon DB', 'Plan NextAuth.js v5 auth', 'Configure Vercel Edge middleware'],
+    },
     ciWorkflow: `name: Next.js CI
 on:
   pull_request:
@@ -1339,6 +1383,12 @@ Warnings: Server/Client boundary mistakes, missing Suspense, cache invalidation 
       design:    'REST · OpenAPI · WebSockets',
       review:    'Async · SQL injection · JWT · N+1',
       fullstack: 'Docker · Redis · Bull · Railway',
+    },
+    agentSuggestions: {
+      coding:    ['Write an Express middleware', 'Create a Prisma service class', 'Implement JWT auth route'],
+      design:    ['Design a REST API schema', 'Write an OpenAPI spec', 'Design a WebSocket event protocol'],
+      review:    ['Review my async error handling', 'Check for SQL injection risks', 'PR#1 — review latest PR'],
+      fullstack: ['Set up Docker + Postgres', 'Plan a Bull queue worker', 'Configure Railway deployment'],
     },
     ciWorkflow: `name: Node.js CI
 on:
@@ -1393,6 +1443,12 @@ Warnings: breaking API contract changes, missing db migrations, secrets handling
       review:    'Async · N+1 · Alembic · Type hints',
       fullstack: 'SQLAlchemy · Celery · Docker · Redis',
     },
+    agentSuggestions: {
+      coding:    ['Write a FastAPI endpoint', 'Create a Pydantic v2 model', 'Implement async SQLAlchemy query'],
+      design:    ['Design a REST API with FastAPI', 'Write Pydantic response schemas', 'Plan API versioning strategy'],
+      review:    ['Review my async endpoint', 'Check for blocking calls', 'PR#1 — review latest PR'],
+      fullstack: ['Set up Alembic migrations', 'Plan a Celery task queue', 'Configure Docker + Postgres'],
+    },
     ciWorkflow: `name: Python CI
 on:
   pull_request:
@@ -1445,6 +1501,12 @@ Warnings: breaking schema changes, missing db migrations, blocking-in-async pitf
       design:    'Minimal API · OpenAPI · SignalR',
       review:    'Async/await · IDisposable · EF N+1',
       fullstack: 'MediatR · Hangfire · Docker · Azure',
+    },
+    agentSuggestions: {
+      coding:    ['Write an ASP.NET Core endpoint', 'Create an EF Core entity', 'Implement a MediatR command'],
+      design:    ['Design a minimal API', 'Write a ProblemDetails schema', 'Plan a SignalR hub'],
+      review:    ['Review my async/await usage', 'Check for IDisposable leaks', 'PR#1 — review latest PR'],
+      fullstack: ['Set up EF Core + Postgres', 'Plan a Hangfire background job', 'Configure Azure App Service'],
     },
     ciWorkflow: `name: .NET CI
 on:
@@ -1504,13 +1566,20 @@ function setStack(stackId) {
 }
 
 function updateAgentNavTags() {
-  const tags = STACKS[currentStack]?.agentTags || {};
+  const stack = STACKS[currentStack] || {};
+  const tags = stack.agentTags || {};
+  const suggs = stack.agentSuggestions || {};
+  // Update nav tag subtitles
   Object.entries(tags).forEach(([agentKey, tagText]) => {
     const btn = document.querySelector(`.agent-btn[data-agent="${agentKey}"]`);
     if (btn) {
       const tagEl = btn.querySelector('.agent-tag');
       if (tagEl) tagEl.textContent = tagText;
     }
+  });
+  // Patch AGENTS suggestions/emptyDesc so empty state reflects the stack
+  Object.entries(suggs).forEach(([agentKey, suggestions]) => {
+    if (AGENTS[agentKey]) AGENTS[agentKey].suggestions = suggestions;
   });
 }
 
@@ -1849,6 +1918,113 @@ let ghRepo = '';
 let ghProjectId = '';
 let ghProjectUrl = '';
 
+
+// ── Zip export (used when GitHub is not configured) ───────────────────────────
+
+// Accumulate every file_changes block parsed this session.
+// Structure: [{ agentKey, timestamp, files: [{ path, operation, content }] }]
+const fileChangesStore = [];
+
+function accumulateFileChanges(agentKey, fileChanges) {
+  if (!fileChanges?.files?.length) return;
+  fileChangesStore.push({
+    agentKey,
+    timestamp: new Date().toISOString(),
+    files: fileChanges.files
+  });
+}
+
+function buildMergedFileTree() {
+  // Last write wins — mirrors git behaviour when multiple commits touch the same file
+  const tree = {}; // path → { content, operation, agentKey }
+  for (const entry of fileChangesStore) {
+    for (const f of entry.files) {
+      if (f.operation === 'delete') {
+        delete tree[f.path];
+      } else {
+        tree[f.path] = { content: f.content || '', operation: f.operation, agentKey: entry.agentKey };
+      }
+    }
+  }
+  return tree;
+}
+
+async function collectAndZip() {
+  const tree = buildMergedFileTree();
+  const paths = Object.keys(tree);
+  if (paths.length === 0) {
+    alert('No file changes in this session yet.');
+    return;
+  }
+
+  const zip = new JSZip();
+  const stack = STACKS[currentStack];
+  const folderName = `agent-studio-${currentStack}-${Date.now()}`;
+  const root = zip.folder(folderName);
+
+  for (const [path, entry] of Object.entries(tree)) {
+    // Recreate full directory structure inside the zip
+    root.file(path, entry.content);
+  }
+
+  // Add a README summarising what was generated
+  const summary = [
+    `# Agent Studio — generated code`,
+    ``,
+    `**Stack:** ${stack?.name || currentStack}`,
+    `**Generated:** ${new Date().toLocaleString()}`,
+    `**Files:** ${paths.length}`,
+    ``,
+    `## Files`,
+    ...paths.map(p => `- \`${p}\``),
+    ``,
+    `## Notes`,
+    `This code was generated by Agent Studio agents. Review before use.`,
+    ``,
+    Object.entries(buildMergedFileTree()).map(([p, e]) =>
+      `### ${p}\nGenerated by: ${e.agentKey} agent`
+    ).join('\n\n'),
+  ].join('\n');
+  root.file('AGENT_STUDIO_README.md', summary);
+
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${folderName}.zip`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function renderZipCard(fileChanges, agentKey) {
+  if (!fileChanges?.files?.length) return '';
+  const allFiles = buildMergedFileTree();
+  const totalFiles = Object.keys(allFiles).length;
+  const newFiles = fileChanges.files.length;
+  const fileRows = fileChanges.files.slice(0, 6).map(f => {
+    const opClass = f.operation === 'create' ? 'create' : f.operation === 'delete' ? 'delete' : 'modify';
+    const opLabel = f.operation === 'create' ? 'A' : f.operation === 'delete' ? 'D' : 'M';
+    return `<div class="pr-file-row">
+      <span class="pr-file-op ${opClass}">${opLabel}</span>
+      <span>${escapeHtml(f.path)}</span>
+    </div>`;
+  }).join('');
+  const moreRows = fileChanges.files.length > 6
+    ? `<div style="color:var(--muted);font-size:10px">+ ${fileChanges.files.length - 6} more files</div>` : '';
+
+  return `<div class="zip-card">
+    <div class="zip-card-header">
+      <span style="font-size:14px;color:var(--accent-orch)">⬇</span>
+      <span style="font-family:'DM Mono',monospace;font-size:12px;font-weight:700;color:var(--accent-orch);flex:1">
+        ${newFiles} file${newFiles !== 1 ? 's' : ''} ready — ${totalFiles} total in session
+      </span>
+      <button class="task-send-btn" style="border-color:rgba(103,232,249,0.4);color:var(--accent-orch);margin:0"
+        onclick="collectAndZip()">⬇ Download zip</button>
+    </div>
+    <div class="zip-card-body">${fileRows}${moreRows}</div>
+  </div>`;
+}
+
 // ── Persistence ───────────────────────────────────────────────────────────────
 
 function saveConversations() {
@@ -2151,7 +2327,11 @@ function renderMessages() {
       : '';
     // Strip raw file_changes block from displayed chat text
     const displayContent = m.content.replace(/```file_changes[\s\S]*?```/g, '').trim();
-    const prCardHtml = renderPrCard(m.prStatus || null);
+    // Show GitHub PR card when connected, zip download card when not
+    const parsedFileChanges = !ghToken ? tryParseFileChanges(m.content) : null;
+    const prCardHtml = ghToken
+      ? renderPrCard(m.prStatus || null)
+      : (parsedFileChanges ? renderZipCard(parsedFileChanges, agent) : renderPrCard(m.prStatus || null));
     // Verdict badge + merge button + fix button for PR reviews
     let verdictHtml = '';
     if (agent === 'review' && m.prNumber && m._pr) {
@@ -2554,6 +2734,7 @@ async function fetchAndRouteIssue(issueNumber) {
 
       // Auto-apply file changes if present
       const fileChanges = tryParseFileChanges(reply);
+      if (fileChanges) accumulateFileChanges(agent, fileChanges);
       if (fileChanges && ghToken) {
         // Attach a live PR status object to the last message so renderMessages can show it
         msgMeta.prStatus = { state: 'working', label: 'Preparing files…' };
@@ -3604,6 +3785,7 @@ async function runAgentLoop() {
         const reply = data.content?.[0]?.text || '';
 
         const fileChanges = tryParseFileChanges(reply);
+        if (fileChanges) accumulateFileChanges(task.agent, fileChanges);
         if (!fileChanges) { updateStep(taskStep, { status: 'done', detail: 'No file changes needed' }); continue; }
 
         // Commit to the shared branch
@@ -4457,6 +4639,7 @@ async function sendMessage() {
 
       // Auto-apply file changes if the override was set (PR fix flow)
       const fileChanges = systemOverride ? tryParseFileChanges(reply) : null;
+      if (fileChanges) accumulateFileChanges(agent, fileChanges);
       if (fileChanges && ghToken) {
         msgMeta.prStatus = { state: 'working', label: 'Applying fixes...' };
         conversations[agent].push(msgMeta);
