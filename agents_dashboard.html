@@ -2796,7 +2796,7 @@ function renderOrchestratorPanel() {
         ${isPaused ? `
           <button class="loop-btn primary" onclick="resumeLoop()">↳ Resume</button>
           <button class="loop-btn danger" onclick="abortLoop()">✕ Abort</button>
-          <span class="loop-meta" style="color:var(--accent-review)">Paused — waiting for approval</span>
+          <span class="loop-meta" style="color:var(--accent-review)">${ls._ciPauseStep ? 'Paused — fix CI in GitHub then Resume to re-check' : 'Paused — waiting for approval'}</span>
         ` : `
           <button class="loop-btn danger" onclick="abortLoop()">✕ Abort loop</button>
           <span class="loop-meta" style="color:var(--accent-orch);animation:pulse 1.5s infinite">⟳ Running · iteration ${ls.iteration}/${ls.maxIterations}</span>
@@ -2884,6 +2884,7 @@ function resumeLoop() {
   if (!loopState || loopState.status !== 'paused') return;
   loopState.status = 'running';
   loopState.paused = false;
+  loopState._ciPauseStep = null; // clear so pause label resets for non-CI pauses
   renderOrchestratorPanel();
   continueLoopAfterPause();
 }
@@ -3185,9 +3186,13 @@ async function runAgentLoop() {
     let ciMaxAttempts = 3;
     let ciAttempt = 0;
     let ciPassed = false;
+    // When the human fixes CI manually and resumes, we re-check CI rather than skipping it.
+    // This flag distinguishes "resume to skip" (timed-out/max-attempts path) from
+    // "resume to re-check" (human-fixed path).
+    let ciResumeMode = 'skip'; // 'skip' | 'recheck'
 
-    while (ciAttempt < ciMaxAttempts && !ls.aborted) {
-      // Check/create workflow on first attempt
+    while (!ciPassed && !ls.aborted) {
+      // Check/create workflow on first attempt only
       if (ciAttempt === 0) {
         const sWorkflow = addLoopStep('fullstack', 'Check CI workflow', 'running');
         try {
@@ -3207,24 +3212,34 @@ async function runAgentLoop() {
       const ciResult = await waitForCI(pr.number, pr.head.ref, sCi);
 
       if (ciResult.conclusion === 'aborted') return;
+
       if (ciResult.conclusion === 'timed_out') {
-        addLoopStep('orchestrator', 'CI timed out — pausing for human review', 'paused');
-        ls.status = 'paused'; renderOrchestratorPanel();
+        const sTimeout = addLoopStep('orchestrator', 'CI timed out — pausing for human review', 'paused',
+          'Fix CI in GitHub Actions, then click Resume to re-check CI, or Abort.');
+        ls.status = 'paused'; ls._ciPauseStep = sTimeout; ciResumeMode = 'recheck';
+        renderOrchestratorPanel();
         await waitForResume();
         if (ls.aborted) return;
-        ciPassed = true; break; // human decided to continue
+        updateStep(sTimeout, { status: 'done', detail: 'Resuming — re-checking CI…' });
+        ls.status = 'running';
+        ciAttempt++; continue; // loop back to poll CI again
       }
+
       if (ciResult.conclusion === 'success') {
         ciPassed = true; break;
       }
 
-      // CI failed — send to coding agent to fix
+      // CI failed — cap auto-fix attempts, then pause for human
       if (ciAttempt >= ciMaxAttempts - 1) {
-        addLoopStep('orchestrator', `CI failed after ${ciMaxAttempts} attempts`, 'paused', 'Human review required. Resume to continue to code review anyway, or Abort.');
-        ls.status = 'paused'; renderOrchestratorPanel();
+        const sPause = addLoopStep('orchestrator', `CI still failing after ${ciMaxAttempts} attempts`, 'paused',
+          'Fix CI manually in GitHub, then click Resume to re-check CI. Or Abort.');
+        ls.status = 'paused'; ls._ciPauseStep = sPause; ciResumeMode = 'recheck';
+        renderOrchestratorPanel();
         await waitForResume();
         if (ls.aborted) return;
-        ciPassed = true; break;
+        updateStep(sPause, { status: 'done', detail: 'Resuming — re-checking CI…' });
+        ls.status = 'running';
+        ciAttempt++; continue; // re-poll CI after human fix
       }
 
       ls.iteration++;
