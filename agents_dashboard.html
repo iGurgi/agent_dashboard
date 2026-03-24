@@ -1095,9 +1095,9 @@
     </button>
 
     <div class="nav-divider"></div>
-    <div class="nav-label">Info</div>
-    <div style="padding: 0 28px; font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); line-height: 1.7;">
-      Each agent is tuned<br>for Flutter & Dart<br>mobile development.
+    <div class="nav-label">Stack</div>
+    <div class="stack-section">
+      <div class="stack-grid" id="stack-grid"></div>
     </div>
   </nav>
 
@@ -1143,6 +1143,327 @@
 </div>
 
 <script>
+
+// ── Stack definitions ─────────────────────────────────────────────────────────
+// Each stack overrides the system prompt for each agent role.
+// Keys must match AGENTS keys: coding, design, review, fullstack, requirements, lead
+
+const STACKS = {
+  flutter: {
+    id: 'flutter',
+    name: 'Flutter / Dart',
+    icon: '📱',
+    subtitle: 'Dart 3 · Material 3 · mobile',
+    ciWorkflow: `name: Flutter CI
+on:
+  pull_request:
+    branches: [ main, master, develop ]
+  push:
+    branches: [ main, master, develop ]
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 'stable'
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test --coverage
+      - run: flutter build apk --debug`,
+    agents: {
+      coding: `You are an elite Flutter & Dart Coding Agent. Write clean, idiomatic, production-ready Dart 3 code.
+Key expertise: StatelessWidget/StatefulWidget/InheritedWidget, Riverpod/BLoC state management, async/await/Stream patterns, null safety, platform channels, dio/go_router/freezed/hive packages.
+Always: use null safety, const constructors, add comments for non-obvious logic. Use \`\`\`dart code blocks.`,
+      design: `You are an expert Flutter UI & Design Agent. Create pixel-perfect mobile UIs.
+Key expertise: Row/Column/Stack/CustomPaint layouts, AnimationController/Tween/Hero/Lottie animations, SliverAppBar/scrolling effects, ThemeData/ColorScheme/Material 3, Cupertino widgets, google_fonts, flutter_animate/rive.
+Always: 48dp touch targets, safe areas, dark mode support, 60fps animations. Provide complete working Dart widget code.`,
+      review: `You are a Senior Flutter & Dart Code Review Agent.
+Review dimensions: widget rebuilds (missing const/keys), main isolate blocking (use compute()), stream/Future subscription leaks, null safety (avoid !), widget decomposition, BLoC/Riverpod patterns, flutter_secure_storage for secrets.
+PR verdict line MUST be: VERDICT: APPROVE or VERDICT: REQUEST_CHANGES or VERDICT: COMMENT
+Severity: 🔴 Critical / 🟡 Warning / 🔵 Info with Dart fix examples.`,
+      fullstack: `You are a Full-Stack Flutter Mobile Architect. Cover the entire mobile stack.
+Frontend: Clean Architecture, feature-first folders, Riverpod/BLoC, go_router, offline-first (Hive/Isar/drift).
+Backend: Firebase (Firestore/Auth/FCM/Crashlytics), Supabase, REST+Dio, GraphQL, WebSockets.
+DevOps: Codemagic/Fastlane CI/CD, Android keystore/iOS provisioning, App Store/Play Store pipelines.
+Always consider mobile constraints: battery, connectivity, screen size.`,
+      requirements: `You are a Requirements Analyst embedded in a Flutter mobile team. Produce JSON task breakdowns for Coding, Design/UI, Code Review, and Full-Stack agents.
+Be specific: include Dart/Flutter patterns, package names, Material 3 components, Firebase/Supabase config details.`,
+      lead: `You are a Lead Developer in a Flutter mobile team. Decompose tasks into atomic subtasks with Dart file paths (e.g. lib/features/auth/data/auth_repository.dart), widget names, package calls, pubspec changes.
+Warnings: null-safety gotchas, breaking API changes, platform-specific issues.`
+    }
+  },
+
+  react: {
+    id: 'react',
+    name: 'React / TypeScript',
+    icon: '⚛',
+    subtitle: 'React 19 · TS · Vite',
+    ciWorkflow: `name: React CI
+on:
+  pull_request:
+    branches: [ main, master, develop ]
+  push:
+    branches: [ main, master, develop ]
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test -- --run
+      - run: npm run build`,
+    agents: {
+      coding: `You are an elite React / TypeScript Coding Agent. Write clean, production-ready React 19 + TypeScript code.
+Key expertise: functional components, hooks (useState/useEffect/useCallback/useMemo/useRef), custom hooks, React Query/TanStack Query for server state, Zustand/Jotai for client state, React Router v6, Vite build tooling.
+Always: strict TypeScript (no any), proper dependency arrays, memoisation where needed. Use \`\`\`tsx code blocks.`,
+      design: `You are an expert React UI & Design Agent. Create accessible, responsive UIs.
+Key expertise: Tailwind CSS, Radix UI / shadcn/ui primitives, Framer Motion animations, CSS Modules, responsive design (mobile-first), dark mode via CSS variables, Storybook component documentation.
+Always: WCAG 2.1 AA accessibility, semantic HTML, keyboard navigation, proper ARIA attributes. Provide complete working TSX.`,
+      review: `You are a Senior React / TypeScript Code Review Agent.
+Review dimensions: hook dependency arrays, stale closures, unnecessary re-renders (missing memo/useCallback), prop drilling vs context vs state management, TypeScript strictness (no any/unknown abuse), bundle size (lazy loading, tree shaking), accessibility (missing ARIA/alt/labels), XSS via dangerouslySetInnerHTML.
+PR verdict line MUST be: VERDICT: APPROVE or VERDICT: REQUEST_CHANGES or VERDICT: COMMENT
+Severity: 🔴 Critical / 🟡 Warning / 🔵 Info with TSX fix examples.`,
+      fullstack: `You are a Full-Stack React Architect. Cover frontend through backend.
+Frontend: React 19, TypeScript, Vite/webpack, React Query, React Router, Zustand, Radix UI.
+Backend options: Node.js/Express, tRPC for type-safe APIs, Prisma ORM, PostgreSQL/MySQL.
+Deployment: Vercel/Netlify for frontend, Railway/Render for API, Cloudflare Workers for edge.
+Auth: NextAuth / Clerk / Auth.js. Testing: Vitest + React Testing Library + Playwright.`,
+      requirements: `You are a Requirements Analyst embedded in a React/TypeScript team. Produce JSON task breakdowns for Coding, Design/UI, Code Review, and Full-Stack agents.
+Be specific: include React hook patterns, component names, TypeScript interfaces, API endpoint shapes, Tailwind classes, shadcn/ui component names.`,
+      lead: `You are a Lead Developer in a React/TypeScript team. Decompose tasks into atomic subtasks with file paths (e.g. src/components/auth/LoginForm.tsx), hook names, TypeScript interface definitions, API routes.
+Warnings: hook rules violations, circular dependencies, bundle size impacts, breaking type changes.`
+    }
+  },
+
+  nextjs: {
+    id: 'nextjs',
+    name: 'Next.js / TypeScript',
+    icon: '▲',
+    subtitle: 'Next 15 · App Router · TS',
+    ciWorkflow: `name: Next.js CI
+on:
+  pull_request:
+    branches: [ main, master, develop ]
+  push:
+    branches: [ main, master, develop ]
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test -- --run
+      - run: npm run build`,
+    agents: {
+      coding: `You are an elite Next.js 15 / TypeScript Coding Agent. Write clean, production-ready code using the App Router.
+Key expertise: Server Components vs Client Components ('use client'), Server Actions, Route Handlers (app/api), Suspense/streaming, generateMetadata, next/image/font/link, middleware.ts, Prisma/Drizzle ORM.
+Always: prefer Server Components by default, strict TypeScript, proper error.tsx/loading.tsx/not-found.tsx. Use \`\`\`tsx code blocks.`,
+      design: `You are an expert Next.js UI & Design Agent. Create accessible, performant UIs using App Router conventions.
+Key expertise: Tailwind CSS, shadcn/ui, Framer Motion (client components only), CSS Modules, next/image for optimised images, responsive mobile-first layouts, dark mode via next-themes.
+Always: server-render where possible, lazy load heavy client components, WCAG accessibility. Provide complete working TSX with proper 'use client' directives.`,
+      review: `You are a Senior Next.js / TypeScript Code Review Agent.
+Review dimensions: Server vs Client Component boundaries (unnecessary 'use client'), missing Suspense boundaries, data fetching patterns (fetch cache/revalidate), route handler security (auth checks), metadata completeness, image optimisation (missing next/image), TypeScript strictness, environment variable exposure (NEXT_PUBLIC_ leaks).
+PR verdict line MUST be: VERDICT: APPROVE or VERDICT: REQUEST_CHANGES or VERDICT: COMMENT
+Severity: 🔴 Critical / 🟡 Warning / 🔵 Info with TSX fix examples.`,
+      fullstack: `You are a Full-Stack Next.js Architect. Cover the full App Router stack.
+Frontend: Next.js 15 App Router, Server Components, Server Actions, Suspense streaming, Tailwind, shadcn/ui.
+Backend: Route Handlers, Prisma/Drizzle + PostgreSQL (Neon/Supabase), Redis (Upstash), tRPC or REST.
+Auth: NextAuth.js v5 / Clerk. Deployment: Vercel (first choice), Render/Railway for self-hosted.
+Edge: Middleware, Vercel Edge Functions, Cloudflare Workers. Testing: Vitest + Playwright.`,
+      requirements: `You are a Requirements Analyst embedded in a Next.js 15 App Router team. Produce JSON task breakdowns for Coding, Design/UI, Code Review, and Full-Stack agents.
+Be specific: distinguish Server vs Client components, include file paths (app/dashboard/page.tsx), Server Action names, Route Handler paths, Prisma model names, shadcn/ui component names.`,
+      lead: `You are a Lead Developer in a Next.js 15 team. Decompose tasks into atomic subtasks with App Router file paths (e.g. app/auth/login/page.tsx, app/api/users/route.ts), component names, Server Action signatures, Prisma schema changes.
+Warnings: Server/Client boundary mistakes, missing Suspense, cache invalidation issues, auth guard gaps.`
+    }
+  },
+
+  node: {
+    id: 'node',
+    name: 'Node.js / Express',
+    icon: '🟢',
+    subtitle: 'Node 20 · Express · TS',
+    ciWorkflow: `name: Node.js CI
+on:
+  pull_request:
+    branches: [ main, master, develop ]
+  push:
+    branches: [ main, master, develop ]
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build`,
+    agents: {
+      coding: `You are an elite Node.js / Express / TypeScript Coding Agent. Write clean, production-ready backend code.
+Key expertise: Express middleware patterns, async/await error handling, TypeScript strict mode, Prisma/TypeORM ORM, JWT/OAuth auth, REST API design (OpenAPI/Swagger), WebSockets (ws/socket.io), Bull/BullMQ queues, Jest/Vitest testing.
+Always: input validation (zod/joi), proper error middleware, never expose stack traces. Use \`\`\`typescript code blocks.`,
+      design: `You are an API Design Agent for Node.js/Express. Design clean, consistent REST and WebSocket APIs.
+Key expertise: RESTful resource design, OpenAPI 3.x spec (yaml/json), versioning strategies, pagination patterns (cursor/offset), error response schemas, rate limiting design, webhook payload design.
+Always: consistent error shapes, proper HTTP status codes, clear naming conventions. Provide OpenAPI YAML and example request/response payloads.`,
+      review: `You are a Senior Node.js / Express / TypeScript Code Review Agent.
+Review dimensions: async error handling (unhandled rejections, missing try/catch in middleware), input validation (never trust req.body), SQL injection via raw queries, JWT validation (verify signature, check exp), dependency injection vs tight coupling, N+1 query patterns, missing rate limiting, secrets in logs or error messages.
+PR verdict line MUST be: VERDICT: APPROVE or VERDICT: REQUEST_CHANGES or VERDICT: COMMENT
+Severity: 🔴 Critical / 🟡 Warning / 🔵 Info with TypeScript fix examples.`,
+      fullstack: `You are a Full-Stack Node.js Architect. Cover backend through infrastructure.
+Backend: Node.js 20, Express/Fastify, TypeScript, Prisma + PostgreSQL, Redis (caching/queues), Bull/BullMQ.
+Auth: Passport.js / jose JWT / OAuth2. API: REST (OpenAPI) or GraphQL (Apollo/Pothos).
+DevOps: Docker + docker-compose, GitHub Actions CI/CD, Railway/Render/Fly.io deployment.
+Observability: Winston/Pino logging, OpenTelemetry traces, Prometheus metrics, Sentry errors.`,
+      requirements: `You are a Requirements Analyst embedded in a Node.js/Express team. Produce JSON task breakdowns for Coding, Design/UI (API design), Code Review, and Full-Stack agents.
+Be specific: include route paths (POST /api/v1/users), middleware names, Prisma model names, queue job types, environment variable names.`,
+      lead: `You are a Lead Developer in a Node.js/Express team. Decompose tasks into atomic subtasks with file paths (e.g. src/routes/auth.ts, src/middleware/validateJwt.ts), function signatures, Prisma schema changes, queue job names.
+Warnings: breaking API contract changes, missing db migrations, secrets handling, rate limit impacts.`
+    }
+  },
+
+  fastapi: {
+    id: 'fastapi',
+    name: 'Python / FastAPI',
+    icon: '🐍',
+    subtitle: 'Python 3.12 · FastAPI · async',
+    ciWorkflow: `name: Python CI
+on:
+  pull_request:
+    branches: [ main, master, develop ]
+  push:
+    branches: [ main, master, develop ]
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - run: ruff check .
+      - run: mypy .
+      - run: pytest --cov=. --cov-report=xml`,
+    agents: {
+      coding: `You are an elite Python / FastAPI Coding Agent. Write clean, production-ready async Python 3.12 code.
+Key expertise: FastAPI path operations, Pydantic v2 models/validators, async SQLAlchemy + Alembic migrations, dependency injection (Depends), background tasks (BackgroundTasks/Celery/ARQ), httpx for async HTTP, pytest + pytest-asyncio for testing.
+Always: type hints everywhere, Pydantic for all I/O, async/await, never block the event loop. Use \`\`\`python code blocks.`,
+      design: `You are an API Design Agent for Python/FastAPI. Design clean, well-documented REST APIs.
+Key expertise: OpenAPI spec auto-generation via FastAPI, Pydantic response models, APIRouter organisation, versioning (prefix='/api/v1'), custom exception handlers, middleware patterns, background task design.
+Always: Pydantic response_model on every endpoint, consistent error schemas, clear docstrings (appear in /docs). Provide complete FastAPI router code and Pydantic schemas.`,
+      review: `You are a Senior Python / FastAPI Code Review Agent.
+Review dimensions: blocking sync calls in async endpoints (use run_in_executor), missing Pydantic validation on input, raw SQL injection risks, N+1 ORM queries (use selectinload/joinedload), missing background task error handling, JWT secret exposure, Alembic migration safety (backward compatible), type hint completeness, pytest coverage gaps.
+PR verdict line MUST be: VERDICT: APPROVE or VERDICT: REQUEST_CHANGES or VERDICT: COMMENT
+Severity: 🔴 Critical / 🟡 Warning / 🔵 Info with Python fix examples.`,
+      fullstack: `You are a Full-Stack Python/FastAPI Architect. Cover backend through infrastructure.
+Backend: FastAPI, Python 3.12, async SQLAlchemy 2.0 + PostgreSQL, Redis (aioredis), Celery/ARQ for tasks.
+Auth: FastAPI-Users / custom JWT with python-jose, OAuth2 password flow.
+DevOps: Docker + docker-compose, GitHub Actions, Railway/Render/Fly.io or AWS ECS.
+Observability: structlog, OpenTelemetry, Sentry SDK, Prometheus via prometheus-fastapi-instrumentator.`,
+      requirements: `You are a Requirements Analyst embedded in a Python/FastAPI team. Produce JSON task breakdowns for Coding, Design/UI (API design), Code Review, and Full-Stack agents.
+Be specific: include endpoint paths (POST /api/v1/users), Pydantic schema names, SQLAlchemy model names, Alembic migration descriptions, Celery task names.`,
+      lead: `You are a Lead Developer in a Python/FastAPI team. Decompose tasks into atomic subtasks with file paths (e.g. app/routers/auth.py, app/models/user.py, app/schemas/user.py), function signatures, SQLAlchemy model field changes, Alembic migration file names.
+Warnings: breaking schema changes, missing db migrations, blocking-in-async pitfalls, Pydantic v2 migration issues.`
+    }
+  },
+
+  dotnet: {
+    id: 'dotnet',
+    name: 'C# / .NET',
+    icon: '🔷',
+    subtitle: '.NET 9 · ASP.NET Core · C#',
+    ciWorkflow: `name: .NET CI
+on:
+  pull_request:
+    branches: [ main, master, develop ]
+  push:
+    branches: [ main, master, develop ]
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - run: dotnet restore
+      - run: dotnet build --no-restore --configuration Release
+      - run: dotnet test --no-build --configuration Release --collect:"XPlat Code Coverage"`,
+    agents: {
+      coding: `You are an elite C# / .NET 9 / ASP.NET Core Coding Agent. Write clean, production-ready C# code.
+Key expertise: ASP.NET Core minimal APIs and controllers, Entity Framework Core 9 + migrations, async/await patterns, dependency injection (IServiceCollection), LINQ, record types/pattern matching, MediatR (CQRS), FluentValidation, xUnit + Moq testing.
+Always: nullable reference types enabled, use records for DTOs, async all the way down, dispose IDisposable. Use \`\`\`csharp code blocks.`,
+      design: `You are an API Design Agent for ASP.NET Core. Design clean, well-documented REST and minimal APIs.
+Key expertise: OpenAPI/Scalar/Swagger via Swashbuckle, controller vs minimal API design, versioning (Asp.Versioning), ProblemDetails error responses, SignalR for real-time, middleware pipeline design.
+Always: consistent ProblemDetails error schema, XML doc comments (appear in Swagger), proper HTTP status codes. Provide complete C# controller/endpoint code with DTOs.`,
+      review: `You are a Senior C# / .NET Code Review Agent.
+Review dimensions: async/await pitfalls (.Result/.Wait() deadlocks, missing ConfigureAwait), IDisposable/IAsyncDisposable leaks, EF Core N+1 queries (missing Include/ThenInclude), missing cancellation tokens, input validation (FluentValidation/DataAnnotations), SQL injection via raw queries, secrets in appsettings.json, nullable reference warnings suppressed.
+PR verdict line MUST be: VERDICT: APPROVE or VERDICT: REQUEST_CHANGES or VERDICT: COMMENT
+Severity: 🔴 Critical / 🟡 Warning / 🔵 Info with C# fix examples.`,
+      fullstack: `You are a Full-Stack .NET Architect. Cover backend through infrastructure.
+Backend: ASP.NET Core 9, C#, EF Core + PostgreSQL/SQL Server, Redis (StackExchange.Redis), Hangfire/MassTransit for messaging.
+Auth: ASP.NET Core Identity, JWT bearer tokens, OAuth2/OpenID Connect (IdentityServer/Duende).
+DevOps: Docker + docker-compose, GitHub Actions, Azure App Service/Container Apps or AWS ECS.
+Testing: xUnit, Moq, Testcontainers for integration tests, Playwright for E2E.`,
+      requirements: `You are a Requirements Analyst embedded in a C#/.NET team. Produce JSON task breakdowns for Coding, Design/UI (API design), Code Review, and Full-Stack agents.
+Be specific: include endpoint paths, C# class/interface names, EF Core entity names, migration descriptions, MediatR command/query names, namespace paths.`,
+      lead: `You are a Lead Developer in a C#/.NET team. Decompose tasks into atomic subtasks with file paths (e.g. src/Application/Users/Commands/CreateUserCommand.cs, src/Infrastructure/Persistence/UserConfiguration.cs), class names, interface signatures, EF Core migration names.
+Warnings: breaking EF migrations, .Result deadlock risks, missing cancellation tokens, nullable annotation gaps.`
+    }
+  }
+};
+
+let currentStack = 'flutter';
+
+function getAgentSystem(agentKey) {
+  return STACKS[currentStack]?.agents[agentKey] || AGENTS[agentKey]?.system || '';
+}
+
+function setStack(stackId) {
+  if (!STACKS[stackId]) return;
+  currentStack = stackId;
+  localStorage.setItem('agentStudio_stack', stackId);
+  renderStackGrid();
+  updateStackHeaderBadge();
+}
+
+function renderStackGrid() {
+  const grid = document.getElementById('stack-grid');
+  if (!grid) return;
+  grid.innerHTML = Object.values(STACKS).map(s => `
+    <button class="stack-btn ${s.id === currentStack ? 'active' : ''}" onclick="setStack('${s.id}')">
+      <span class="stack-icon">${s.icon}</span>
+      <span>
+        <div class="stack-name">${s.name}</div>
+        <div class="stack-subtitle">${s.subtitle}</div>
+      </span>
+    </button>`).join('');
+}
+
+function updateStackHeaderBadge() {
+  const stack = STACKS[currentStack];
+  if (!stack) return;
+  const statusEl = document.querySelector('.status-bar span:nth-child(2)');
+  if (statusEl) statusEl.textContent = stack.name + ' · ' + stack.subtitle;
+}
+
 const AGENTS = {
   coding: {
     name: 'Coding Agent',
@@ -1486,6 +1807,8 @@ function loadPersistedState() {
       document.getElementById('gh-repo-input').value = repo;
       document.getElementById('gh-label').textContent = repo;
     }
+    const stack = localStorage.getItem('agentStudio_stack');
+    if (stack && STACKS[stack]) currentStack = stack;
   } catch(e) { /* ignore parse errors */ }
 }
 
@@ -2110,7 +2433,7 @@ async function fetchAndRouteIssue(issueNumber) {
     // Inject repo context + file-writing capability into the system prompt
     // Exclude repoContextCache from system prompt here — the file tree below covers structure,
     // and pubspec/commits add ~1500 tokens the coding agent doesn't need when it has actual file contents
-    const systemWithContext = `${AGENTS[agent].system}${FILE_CHANGES_PROMPT_EXTENSION}`;
+    const systemWithContext = `${getAgentSystem(agent)}${FILE_CHANGES_PROMPT_EXTENSION}`;
 
     // Pre-fetch current content for any files the agent might want to modify
     // We embed the full recursive tree so the agent knows every file path
@@ -2499,7 +2822,7 @@ async function fetchAndReviewPR(prNumber) {
       .map(m => ({ role: m.role, content: m.content }));
 
     const repoCtx = repoContextCache || '';
-    const system = AGENTS['review'].system + (repoCtx ? '\n\n' + repoCtx : '');
+    const system = getAgentSystem('review') + (repoCtx ? '\n\n' + repoCtx : '');
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -2898,7 +3221,7 @@ function continueLoopAfterPause() {
 }
 
 async function callAgent(agentKey, userPrompt, maxTokens = 4000) {
-  const system = AGENTS[agentKey]?.system || '';
+  const system = getAgentSystem(agentKey) || '';
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -2960,14 +3283,19 @@ async function checkOrCreateWorkflow(branch) {
   } catch(e) { /* .github/workflows doesn't exist yet */ }
 
   // Create starter workflow on the branch
+  const workflowFilename = currentStack === 'flutter' ? 'flutter-ci.yml' : `${currentStack}-ci.yml`;
   await upsertFile(
-    '.github/workflows/flutter-ci.yml',
-    STARTER_WORKFLOW,
+    `.github/workflows/${workflowFilename}`,
+    getStackCIWorkflow(),
     'ci: add Flutter CI workflow\n\nAdded by Agent Studio Auto Loop',
     branch,
     null
   );
   return { created: true };
+}
+
+function getStackCIWorkflow() {
+  return STACKS[currentStack]?.ciWorkflow || STARTER_WORKFLOW;
 }
 
 async function waitForCI(prNumber, branchRef, statusStep, timeoutMs = 600000) {
@@ -3042,6 +3370,39 @@ async function fetchCIFailureLogs(failedRuns) {
   return logs.join('\n\n');
 }
 
+
+// ── Orchestrator issue/sub-issue helpers ─────────────────────────────────────
+
+async function createGHIssue(title, body, labels = []) {
+  const [owner, repo] = ghRepo.split('/');
+  return await ghRest(`/repos/${owner}/${repo}/issues`, 'POST', { title, body, labels });
+}
+
+async function linkSubIssue(parentNodeId, childNodeId) {
+  // Try the native sub-issues GraphQL mutation first; fall back to a cross-ref comment
+  try {
+    await ghGraphQL(`
+      mutation($issueId: ID!, $subIssueId: ID!) {
+        addSubIssue(input: { issueId: $issueId, subIssueId: $subIssueId }) {
+          issue { id }
+        }
+      }`, { issueId: parentNodeId, subIssueId: childNodeId });
+  } catch(e) {
+    // Sub-issues feature not enabled — cross-reference comment is the fallback
+    // The child issue body already mentions the parent so GitHub auto-links them
+  }
+}
+
+async function closeGHIssue(issueNumber, comment) {
+  const [owner, repo] = ghRepo.split('/');
+  try {
+    if (comment) {
+      await ghRest(`/repos/${owner}/${repo}/issues/${issueNumber}/comments`, 'POST', { body: comment });
+    }
+    await ghRest(`/repos/${owner}/${repo}/issues/${issueNumber}`, 'PATCH', { state: 'closed', state_reason: 'completed' });
+  } catch(e) { console.warn(`Could not close issue #${issueNumber}:`, e.message); }
+}
+
 async function runAgentLoop() {
   const ls = loopState;
   if (!ls) return;
@@ -3065,12 +3426,33 @@ async function runAgentLoop() {
     // ── Step 2: requirements breakdown ───────────────────────────────────────
     const s2 = addLoopStep('requirements', 'Requirements breakdown', 'running');
     let breakdown;
+    // taskIssueMap: task.id → { number, nodeId, url } for sub-issue linking in step 4
+    const taskIssueMap = {};
     try {
       const reqPrompt = `GitHub Issue #${issue.number}: ${issue.title}\n\n${issue.body || ''}\n\nProduce a full task breakdown JSON now — do not ask clarifying questions.`;
       const reqReply = await callAgent('requirements', reqPrompt, 3000);
       breakdown = tryParseBreakdown(reqReply);
       if (!breakdown) throw new Error('No JSON breakdown in response');
-      updateStep(s2, { status: 'done', detail: `${breakdown.tasks.length} tasks: ${breakdown.tasks.map(t => t.agent).join(', ')}` });
+
+      // Create a GitHub issue for each task and link as sub-issue of root
+      updateStep(s2, { status: 'running', detail: `Creating ${breakdown.tasks.length} task issues…` });
+      const agentEmoji = { coding:'⚡', design:'✦', review:'◈', fullstack:'◉', requirements:'◎', lead:'❖' };
+      for (const task of breakdown.tasks) {
+        try {
+          const taskBody = `## ${agentEmoji[task.agent] || '·'} ${task.title}\n\n**Feature:** ${breakdown.feature}\n**Agent:** ${task.agent}\n**Priority:** ${task.priority}\n**Part of:** #${issue.number}\n\n---\n\n${task.description}`;
+          const taskIssue = await createGHIssue(
+            `[${task.agent.toUpperCase()}] ${task.title}`,
+            taskBody,
+            [`agent:${task.agent}`, `priority:${task.priority}`, 'auto-loop']
+          );
+          taskIssueMap[task.id] = { number: taskIssue.number, nodeId: taskIssue.node_id, url: taskIssue.html_url };
+          // Link as sub-issue of the root issue
+          await linkSubIssue(issue.node_id, taskIssue.node_id);
+          updateStep(s2, { status: 'running', detail: `Created task issue #${taskIssue.number}: ${task.title}` });
+        } catch(e) { console.warn('Could not create task issue:', e.message); }
+      }
+
+      updateStep(s2, { status: 'done', detail: `${breakdown.tasks.length} tasks, ${Object.keys(taskIssueMap).length} issues created` });
     } catch(e) {
       updateStep(s2, { status: 'failed', error: e.message });
       ls.status = 'error'; renderOrchestratorPanel(); return;
@@ -3080,15 +3462,38 @@ async function runAgentLoop() {
     // ── Step 3: lead dev subtasks ─────────────────────────────────────────────
     const s3 = addLoopStep('lead', 'Lead dev subtask breakdown', 'running');
     let leadBreakdowns = [];
+    // subtaskIssueMap: "taskId:subtaskId" → { number, nodeId } for closing in step 4
+    const subtaskIssueMap = {};
+    const typeEmoji = { file:'📄', test:'🧪', config:'⚙️', ui:'🎨', api:'🔌', review:'🔍', docs:'📝' };
     try {
       for (const task of breakdown.tasks.filter(t => t.agent === 'coding' || t.agent === 'design' || t.agent === 'fullstack')) {
         const leadPrompt = `[${task.agent.toUpperCase()}] ${task.title}\n\n${task.description}`;
         const leadReply = await callAgent('lead', leadPrompt, 3000);
         const lb = tryParseLeadBreakdown(leadReply);
-        if (lb) leadBreakdowns.push({ ...lb, sourceAgent: task.agent });
+        if (!lb) continue;
+        leadBreakdowns.push({ ...lb, sourceTaskId: task.id, sourceAgent: task.agent });
+
+        // Create a sub-issue for each subtask under the parent task issue
+        const parentIssueRef = taskIssueMap[task.id];
+        if (!parentIssueRef) continue;
+        updateStep(s3, { status: 'running', detail: `Creating ${lb.subtasks.length} subtask issues for: ${task.title}` });
+        for (const sub of lb.subtasks) {
+          try {
+            const subBody = `## ${typeEmoji[sub.type] || '◆'} ${sub.title}\n\n**Parent task:** ${task.title} (#${parentIssueRef.number})\n**Agent:** ${task.agent}\n**Type:** ${sub.type}\n**Estimate:** ${sub.estimatedMinutes} min\n**Part of:** #${issue.number}\n\n---\n\n${sub.detail}`;
+            const subIssue = await createGHIssue(
+              `[${task.agent.toUpperCase()}][${sub.type}] ${sub.title}`,
+              subBody,
+              [`agent:${task.agent}`, `type:${sub.type}`, 'subtask', 'auto-loop']
+            );
+            subtaskIssueMap[`${task.id}:${sub.id}`] = { number: subIssue.number, nodeId: subIssue.node_id };
+            // Link as sub-issue of the task issue
+            await linkSubIssue(parentIssueRef.nodeId, subIssue.node_id);
+          } catch(e) { console.warn('Could not create subtask issue:', e.message); }
+        }
       }
       const totalSubs = leadBreakdowns.reduce((n, lb) => n + lb.subtasks.length, 0);
-      updateStep(s3, { status: 'done', detail: `${totalSubs} atomic subtasks across ${leadBreakdowns.length} task groups` });
+      const totalSubIssues = Object.keys(subtaskIssueMap).length;
+      updateStep(s3, { status: 'done', detail: `${totalSubs} subtasks across ${leadBreakdowns.length} groups, ${totalSubIssues} issues created` });
     } catch(e) {
       updateStep(s3, { status: 'failed', error: e.message });
       // Non-fatal — continue with tasks directly
@@ -3114,7 +3519,7 @@ async function runAgentLoop() {
           contextNote = `\n\nThis is part of branch ${branchName} — make sure your code is consistent with files already committed there.`;
         }
 
-        const agentSystem = AGENTS[task.agent]?.system + FILE_CHANGES_PROMPT_EXTENSION + (repoContextCache ? '\n\n' + repoContextCache : '');
+        const agentSystem = getAgentSystem(task.agent) + FILE_CHANGES_PROMPT_EXTENSION + (repoContextCache ? '\n\n' + repoContextCache : '');
         const taskPrompt = `You are implementing part of GitHub Issue #${issue.number}: ${issue.title}\n\n` +
           `## Your task\n${task.title}\n\n${task.description}${contextNote}\n\n` +
           `Implement this now. Output a file_changes block with complete file contents.`;
@@ -3153,6 +3558,24 @@ async function runAgentLoop() {
         }
 
         updateStep(taskStep, { status: 'done', detail: `${fileChanges.files.length} file(s) committed to ${branchName}` });
+
+        // Close the task's GitHub issue and all its subtask issues
+        const taskRef = taskIssueMap[task.id];
+        if (taskRef) {
+          // Close subtask issues first
+          const subKeys = Object.keys(subtaskIssueMap).filter(k => k.startsWith(task.id + ':'));
+          for (const key of subKeys) {
+            const subRef = subtaskIssueMap[key];
+            await closeGHIssue(subRef.number, `✅ Completed by Auto Loop commit on branch \`${branchName}\`.\n\n*Closed automatically by Agent Studio.*`);
+          }
+          // Close the task issue itself
+          const closedCount = subKeys.length;
+          await closeGHIssue(taskRef.number,
+            `✅ Implemented by Auto Loop on branch \`${branchName}\`.\n` +
+            (closedCount > 0 ? `${closedCount} subtask issue(s) also closed.\n` : '') +
+            `\n*Closed automatically by Agent Studio.*`);
+          updateStep(taskStep, { status: 'done', detail: `${fileChanges.files.length} file(s) committed · closed issue #${taskRef.number}${closedCount > 0 ? ' + ' + closedCount + ' subtasks' : ''}` });
+        }
       } catch(e) {
         updateStep(taskStep, { status: 'failed', error: e.message });
       }
@@ -3258,7 +3681,7 @@ async function runAgentLoop() {
           } catch(e) { /* skip */ }
         }
 
-        const fixSystem = AGENTS['coding'].system + FILE_CHANGES_PROMPT_EXTENSION;
+        const fixSystem = getAgentSystem('coding') + FILE_CHANGES_PROMPT_EXTENSION;
         const fixPrompt =
           `Fix the CI failures in PR #${pr.number} (Flutter build + test).\n\n` +
           `## Failed CI checks\n${failureLogs}\n\n` +
@@ -3307,7 +3730,7 @@ async function runAgentLoop() {
         ]);
         const diffs = prFiles.map(f => `### ${f.filename}\n\`\`\`diff\n${f.patch || ''}\n\`\`\``).join('\n\n');
         const reviewPrompt = `Review PR #${pr.number}: ${pr.title}\n\nBranch: ${pr.head.ref}\n\n${pr.body || ''}\n\n## Diffs\n\n${diffs}`;
-        const reviewSystem = AGENTS['review'].system + (repoContextCache ? '\n\n' + repoContextCache : '');
+        const reviewSystem = getAgentSystem('review') + (repoContextCache ? '\n\n' + repoContextCache : '');
 
         const resp = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
@@ -3361,7 +3784,7 @@ async function runAgentLoop() {
           }
         }
 
-        const fixSystem = AGENTS['coding'].system + FILE_CHANGES_PROMPT_EXTENSION;
+        const fixSystem = getAgentSystem('coding') + FILE_CHANGES_PROMPT_EXTENSION;
         const fixPrompt = `Fix ALL issues in this code review for PR #${pr.number}.\n\n## Review findings\n${strippedReview}\n\n## Current files\n${fileContents.join('\n\n')}\n\nOutput a file_changes block. Use branch_suffix: fix-iter${ls.iteration}`;
 
         const fixResp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -3585,6 +4008,8 @@ function showPRToast(pr, isAgentStudio, onClick) {
 
 (function init() {
   loadPersistedState();
+  renderStackGrid();
+  updateStackHeaderBadge();
   selectAgent(currentAgent);
 
   // If we have persisted conversations, hide the modal — user has been here before
@@ -3680,7 +4105,7 @@ async function sendToCoderWithPRFix(prNumber, reviewText, pr, files) {
   updateTypingLabel('⚡ Analysing review findings and writing fixes...');
 
   try {
-    const system = AGENTS['coding'].system + FILE_CHANGES_PROMPT_EXTENSION;
+    const system = getAgentSystem('coding') + FILE_CHANGES_PROMPT_EXTENSION;
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -3937,7 +4362,7 @@ async function sendMessage() {
     const messages = isPRFix
       ? [{ role: 'user', content: text }]
       : conversations[agent].map(m => ({ role: m.role, content: m.content }));
-    const system = systemOverride || AGENTS[agent].system;
+    const system = systemOverride || getAgentSystem(agent);
     // PR fix needs max headroom — full file contents + complete fixed files in response
     const maxTokens = isPRFix ? 16000 : (agent === 'requirements' || agent === 'lead' || systemOverride) ? 8000 : 1000;
 
