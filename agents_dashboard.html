@@ -3355,17 +3355,28 @@ function renderOrchestratorPanel() {
     </div>
     <div class="loop-controls">
       ${!ls || isDone ? `
-        <div class="issue-input-row">
-          <input id="loop-issue-input" type="number" placeholder="#issue" min="1" onkeydown="if(event.key==='Enter') startLoop()"/>
-          <button class="loop-btn primary" onclick="startLoop()" ${!apiKey || !ghToken ? 'disabled title="Connect API key and GitHub first"' : ''}>
-            ⟳ Start loop
-          </button>
-        </div>
-        <label style="display:flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);cursor:pointer">
-          <input type="checkbox" id="loop-human-gate" style="width:13px;height:13px;" ${ls?.humanGate ? 'checked' : ''} onchange="loopState && (loopState.humanGate = this.checked)">
-          pause for approval before merge
-        </label>
-        <span class="loop-meta">${ls ? `${ls.steps.length} steps · ${ls.iteration} iteration(s)` : 'Enter a GitHub issue number to start'}</span>
+        ${ghToken && ghRepo ? `
+          <div class="issue-input-row">
+            <input id="loop-issue-input" type="number" placeholder="#issue" min="1" onkeydown="if(event.key==='Enter') startLoop()"/>
+            <button class="loop-btn primary" onclick="startLoop()" ${!apiKey ? 'disabled title="Connect API key first"' : ''}>⟳ Start loop</button>
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);cursor:pointer">
+            <input type="checkbox" id="loop-human-gate" style="width:13px;height:13px;" ${ls?.humanGate ? 'checked' : ''} onchange="loopState && (loopState.humanGate = this.checked)">
+            pause for approval before merge
+          </label>
+        ` : `
+          <div style="display:flex;flex-direction:column;gap:8px;flex:1">
+            <textarea id="loop-prompt-input" placeholder="Describe the feature you want built…" rows="3"
+              style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:'Syne',sans-serif;font-size:13px;outline:none;resize:none;transition:border-color 0.2s;width:100%"
+              onfocus="this.style.borderColor='var(--accent-orch)'" onblur="this.style.borderColor='var(--border)'"
+              onkeydown="if(event.key==='Enter'&&event.ctrlKey) startLoop()"></textarea>
+            <div style="display:flex;align-items:center;gap:8px">
+              <button class="loop-btn primary" onclick="startLoop()" ${!apiKey ? 'disabled title="Connect API key first"' : ''}>⟳ Start loop</button>
+              <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">Ctrl+Enter to start · outputs zip</span>
+            </div>
+          </div>
+        `}
+        <span class="loop-meta">${ls ? `${ls.steps.length} steps · ${ls.iteration} iteration(s)` : (ghToken ? 'Enter a GitHub issue number' : 'Describe what to build')}</span>
       ` : `
         ${isPaused ? `
           <button class="loop-btn primary" onclick="resumeLoop()">↳ Resume</button>
@@ -3386,11 +3397,14 @@ function renderOrchestratorPanel() {
 }
 
 function renderLoopEmpty() {
+  const noGitHub = !ghToken || !ghRepo;
   return `<div class="empty-state">
     <div class="empty-icon">⟳</div>
     <h2>Auto Loop ready</h2>
-    <p>Enter a GitHub issue number below to run the full autonomous pipeline:<br>
-    Requirements → Lead Dev subtasks → Code → Review → Fix → Merge</p>
+    <p>${noGitHub
+      ? 'Describe what you want built below. The loop will run requirements → subtasks → code and produce a <strong>downloadable zip</strong>.'
+      : 'Enter a GitHub issue number below. The loop will run requirements → subtasks → code → CI → review → merge.'
+    }</p>
   </div>`;
 }
 
@@ -3437,14 +3451,30 @@ function updateStep(step, updates) {
 // ── Agentic loop ─────────────────────────────────────────────────────────────
 
 async function startLoop() {
-  const input = document.getElementById('loop-issue-input');
-  const num = parseInt(input?.value || '', 10);
-  if (!num || num < 1) { input?.focus(); return; }
   if (!apiKey) { promptApiKey(); return; }
-  if (!ghToken || !ghRepo) { promptApiKey(); return; }
 
   const humanGate = document.getElementById('loop-human-gate')?.checked || false;
-  loopState = { issueNumber: num, status: 'running', steps: [], iteration: 1, maxIterations: 3, paused: false, aborted: false, humanGate, prNumber: null };
+
+  if (ghToken && ghRepo) {
+    // GitHub mode: start from an issue number
+    const input = document.getElementById('loop-issue-input');
+    const num = parseInt(input?.value || '', 10);
+    if (!num || num < 1) { input?.focus(); return; }
+    loopState = { issueNumber: num, status: 'running', steps: [], iteration: 1, maxIterations: 3, paused: false, aborted: false, humanGate, prNumber: null, noGitHub: false };
+  } else {
+    // No-GitHub mode: start from a free-text prompt
+    const textarea = document.getElementById('loop-prompt-input');
+    const prompt = textarea?.value?.trim();
+    if (!prompt) { textarea?.focus(); return; }
+    // Synthesise a minimal issue-like object that runAgentLoop can use
+    loopState = {
+      issueNumber: null,
+      promptText: prompt,
+      status: 'running', steps: [], iteration: 1, maxIterations: 3,
+      paused: false, aborted: false, humanGate, prNumber: null, noGitHub: true
+    };
+  }
+
   renderOrchestratorPanel();
   await runAgentLoop();
 }
@@ -3659,18 +3689,33 @@ async function runAgentLoop() {
   if (!ls) return;
 
   try {
-    const [owner, repo] = ghRepo.split('/');
-    await fetchRepoContext();
+    const [owner, repo] = ls.noGitHub ? ['', ''] : ghRepo.split('/');
+    if (!ls.noGitHub) await fetchRepoContext();
 
-    // ── Step 1: fetch the issue ───────────────────────────────────────────────
-    const s1 = addLoopStep('orchestrator', `Fetch issue #${ls.issueNumber}`, 'running');
+    // ── Step 1: fetch or synthesise the issue ────────────────────────────────
     let issue;
-    try {
-      issue = await ghRest(`/repos/${owner}/${repo}/issues/${ls.issueNumber}`);
-      updateStep(s1, { status: 'done', detail: escapeHtml(issue.title), issueNumber: issue.number, issueUrl: issue.html_url });
-    } catch(e) {
-      updateStep(s1, { status: 'failed', error: e.message });
-      ls.status = 'error'; renderOrchestratorPanel(); return;
+    if (ls.noGitHub) {
+      // No GitHub — build a synthetic issue from the free-text prompt
+      const s1 = addLoopStep('orchestrator', 'Using prompt as feature spec', 'running');
+      const firstLine = ls.promptText.split('\n')[0].slice(0, 80);
+      issue = {
+        number: 0,
+        node_id: null,
+        title: firstLine,
+        body: ls.promptText,
+        html_url: null,
+        state: 'open'
+      };
+      updateStep(s1, { status: 'done', detail: escapeHtml(firstLine) });
+    } else {
+      const s1 = addLoopStep('orchestrator', `Fetch issue #${ls.issueNumber}`, 'running');
+      try {
+        issue = await ghRest(`/repos/${owner}/${repo}/issues/${ls.issueNumber}`);
+        updateStep(s1, { status: 'done', detail: escapeHtml(issue.title), issueNumber: issue.number, issueUrl: issue.html_url });
+      } catch(e) {
+        updateStep(s1, { status: 'failed', error: e.message });
+        ls.status = 'error'; renderOrchestratorPanel(); return;
+      }
     }
     if (ls.aborted) return;
 
@@ -3685,25 +3730,27 @@ async function runAgentLoop() {
       breakdown = tryParseBreakdown(reqReply);
       if (!breakdown) throw new Error('No JSON breakdown in response');
 
-      // Create a GitHub issue for each task and link as sub-issue of root
-      updateStep(s2, { status: 'running', detail: `Creating ${breakdown.tasks.length} task issues…` });
-      const agentEmoji = { coding:'⚡', design:'✦', review:'◈', fullstack:'◉', requirements:'◎', lead:'❖' };
-      for (const task of breakdown.tasks) {
-        try {
-          const taskBody = `## ${agentEmoji[task.agent] || '·'} ${task.title}\n\n**Feature:** ${breakdown.feature}\n**Agent:** ${task.agent}\n**Priority:** ${task.priority}\n**Part of:** #${issue.number}\n\n---\n\n${task.description}`;
-          const taskIssue = await createGHIssue(
-            `[${task.agent.toUpperCase()}] ${task.title}`,
-            taskBody,
-            [`agent:${task.agent}`, `priority:${task.priority}`, 'auto-loop']
-          );
-          taskIssueMap[task.id] = { number: taskIssue.number, nodeId: taskIssue.node_id, url: taskIssue.html_url };
-          // Link as sub-issue of the root issue
-          await linkSubIssue(issue.node_id, taskIssue.node_id);
-          updateStep(s2, { status: 'running', detail: `Created task issue #${taskIssue.number}: ${task.title}` });
-        } catch(e) { console.warn('Could not create task issue:', e.message); }
+      if (!ls.noGitHub) {
+        // Create a GitHub issue for each task and link as sub-issue of root
+        updateStep(s2, { status: 'running', detail: `Creating ${breakdown.tasks.length} task issues…` });
+        const agentEmoji = { coding:'⚡', design:'✦', review:'◈', fullstack:'◉', requirements:'◎', lead:'❖' };
+        for (const task of breakdown.tasks) {
+          try {
+            const taskBody = `## ${agentEmoji[task.agent] || '·'} ${task.title}\n\n**Feature:** ${breakdown.feature}\n**Agent:** ${task.agent}\n**Priority:** ${task.priority}\n**Part of:** #${issue.number}\n\n---\n\n${task.description}`;
+            const taskIssue = await createGHIssue(
+              `[${task.agent.toUpperCase()}] ${task.title}`,
+              taskBody,
+              [`agent:${task.agent}`, `priority:${task.priority}`, 'auto-loop']
+            );
+            taskIssueMap[task.id] = { number: taskIssue.number, nodeId: taskIssue.node_id, url: taskIssue.html_url };
+            await linkSubIssue(issue.node_id, taskIssue.node_id);
+            updateStep(s2, { status: 'running', detail: `Created task issue #${taskIssue.number}: ${task.title}` });
+          } catch(e) { console.warn('Could not create task issue:', e.message); }
+        }
+        updateStep(s2, { status: 'done', detail: `${breakdown.tasks.length} tasks, ${Object.keys(taskIssueMap).length} issues created` });
+      } else {
+        updateStep(s2, { status: 'done', detail: `${breakdown.tasks.length} tasks identified` });
       }
-
-      updateStep(s2, { status: 'done', detail: `${breakdown.tasks.length} tasks, ${Object.keys(taskIssueMap).length} issues created` });
     } catch(e) {
       updateStep(s2, { status: 'failed', error: e.message });
       ls.status = 'error'; renderOrchestratorPanel(); return;
@@ -3724,22 +3771,23 @@ async function runAgentLoop() {
         if (!lb) continue;
         leadBreakdowns.push({ ...lb, sourceTaskId: task.id, sourceAgent: task.agent });
 
-        // Create a sub-issue for each subtask under the parent task issue
-        const parentIssueRef = taskIssueMap[task.id];
-        if (!parentIssueRef) continue;
-        updateStep(s3, { status: 'running', detail: `Creating ${lb.subtasks.length} subtask issues for: ${task.title}` });
-        for (const sub of lb.subtasks) {
-          try {
-            const subBody = `## ${typeEmoji[sub.type] || '◆'} ${sub.title}\n\n**Parent task:** ${task.title} (#${parentIssueRef.number})\n**Agent:** ${task.agent}\n**Type:** ${sub.type}\n**Estimate:** ${sub.estimatedMinutes} min\n**Part of:** #${issue.number}\n\n---\n\n${sub.detail}`;
-            const subIssue = await createGHIssue(
-              `[${task.agent.toUpperCase()}][${sub.type}] ${sub.title}`,
-              subBody,
-              [`agent:${task.agent}`, `type:${sub.type}`, 'subtask', 'auto-loop']
-            );
-            subtaskIssueMap[`${task.id}:${sub.id}`] = { number: subIssue.number, nodeId: subIssue.node_id };
-            // Link as sub-issue of the task issue
-            await linkSubIssue(parentIssueRef.nodeId, subIssue.node_id);
-          } catch(e) { console.warn('Could not create subtask issue:', e.message); }
+        // Create a sub-issue for each subtask under the parent task issue (GitHub mode only)
+        if (!ls.noGitHub) {
+          const parentIssueRef = taskIssueMap[task.id];
+          if (!parentIssueRef) continue;
+          updateStep(s3, { status: 'running', detail: `Creating ${lb.subtasks.length} subtask issues for: ${task.title}` });
+          for (const sub of lb.subtasks) {
+            try {
+              const subBody = `## ${typeEmoji[sub.type] || '◆'} ${sub.title}\n\n**Parent task:** ${task.title} (#${parentIssueRef.number})\n**Agent:** ${task.agent}\n**Type:** ${sub.type}\n**Estimate:** ${sub.estimatedMinutes} min\n**Part of:** #${issue.number}\n\n---\n\n${sub.detail}`;
+              const subIssue = await createGHIssue(
+                `[${task.agent.toUpperCase()}][${sub.type}] ${sub.title}`,
+                subBody,
+                [`agent:${task.agent}`, `type:${sub.type}`, 'subtask', 'auto-loop']
+              );
+              subtaskIssueMap[`${task.id}:${sub.id}`] = { number: subIssue.number, nodeId: subIssue.node_id };
+              await linkSubIssue(parentIssueRef.nodeId, subIssue.node_id);
+            } catch(e) { console.warn('Could not create subtask issue:', e.message); }
+          }
         }
       }
       const totalSubs = leadBreakdowns.reduce((n, lb) => n + lb.subtasks.length, 0);
@@ -3811,8 +3859,8 @@ async function runAgentLoop() {
 
         updateStep(taskStep, { status: 'done', detail: `${fileChanges.files.length} file(s) committed to ${branchName}` });
 
-        // Close the task's GitHub issue and all its subtask issues
-        const taskRef = taskIssueMap[task.id];
+        // Close the task's GitHub issue and all its subtask issues (GitHub mode only)
+        const taskRef = !ls.noGitHub ? taskIssueMap[task.id] : null;
         if (taskRef) {
           // Close subtask issues first
           const subKeys = Object.keys(subtaskIssueMap).filter(k => k.startsWith(task.id + ':'));
@@ -3835,8 +3883,25 @@ async function runAgentLoop() {
     if (ls.aborted) return;
 
     if (!createdBranch || allResults.length === 0) {
+      if (ls.noGitHub && Object.keys(buildMergedFileTree()).length > 0) {
+        // No-GitHub: files were accumulated in the store even without a branch
+        const sDone = addLoopStep('orchestrator', 'Code generation complete', 'done',
+          `${Object.keys(buildMergedFileTree()).length} file(s) ready — click Download zip below`);
+        ls.status = 'done'; renderOrchestratorPanel();
+        await collectAndZip();
+        return;
+      }
       const noFiles = addLoopStep('orchestrator', 'No files committed', 'failed', 'Agents did not produce any file changes. Check the issue description.');
       ls.status = 'error'; renderOrchestratorPanel(); return;
+    }
+
+    // No-GitHub path: skip PR/CI/review/merge — just zip and done
+    if (ls.noGitHub) {
+      const sDone = addLoopStep('orchestrator', 'Code generation complete', 'done',
+        `${allResults.length} file(s) generated across ${breakdown.tasks.length} tasks`);
+      ls.status = 'done'; renderOrchestratorPanel();
+      await collectAndZip();
+      return;
     }
 
     // ── Step 5: open PR ───────────────────────────────────────────────────────
