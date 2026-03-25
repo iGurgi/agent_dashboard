@@ -1065,6 +1065,18 @@
     padding-left: 14px; position: relative; line-height: 1.5;
   }
   .cl-items li::before { content: '·'; position: absolute; left: 3px; color: var(--accent-orch); }
+
+  /* Passphrase save toggle */
+  .save-creds-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 0 2px;
+  }
+  .save-creds-row input[type=checkbox] { width: 14px; height: 14px; cursor: pointer; }
+  .save-creds-row label {
+    font-family: 'DM Mono', monospace; font-size: 11px;
+    color: var(--muted); cursor: pointer; user-select: none;
+  }
+  .passphrase-row { margin-top: 2px; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
@@ -1105,14 +1117,43 @@
       <input class="modal-input" id="gh-repo-input" type="text" placeholder="acme/my-flutter-app" />
     </div>
 
+    <div style="height:1px;background:var(--border);margin:8px 0 4px"></div>
+
+    <div class="save-creds-row">
+      <input type="checkbox" id="save-creds-toggle" onchange="togglePassphraseRow(this.checked)" />
+      <label for="save-creds-toggle">Save credentials encrypted between sessions</label>
+    </div>
+    <div class="modal-input-wrap passphrase-row" id="passphrase-row" style="display:none">
+      <div class="modal-label">Passphrase <span style="color:var(--muted)">(used to encrypt — never stored)</span></div>
+      <input class="modal-input" id="passphrase-input" type="password" placeholder="Choose a passphrase…" onkeydown="if(event.key==='Enter') saveApiKey()" />
+    </div>
+
     <button class="modal-submit" onclick="saveApiKey()">Connect →</button>
-    <div class="modal-note">Keys stored in memory only · GitHub token needs <code style="font-size:10px;background:var(--surface2);padding:1px 5px;border-radius:3px">project</code> + <code style="font-size:10px;background:var(--surface2);padding:1px 5px;border-radius:3px">repo</code> scopes</div>
+    <div class="modal-note" id="modal-note-text">Keys stored in memory only · GitHub token needs <code style="font-size:10px;background:var(--surface2);padding:1px 5px;border-radius:3px">project</code> + <code style="font-size:10px;background:var(--surface2);padding:1px 5px;border-radius:3px">repo</code> scopes</div>
+  </div>
+</div>
+
+<!-- Unlock Modal (shown on reload when encrypted creds exist) -->
+<div class="modal-overlay" id="unlock-modal" style="display:none">
+  <div class="modal">
+    <div class="modal-logo" style="color:var(--accent-orch)">🔒</div>
+    <h2>Unlock Agent Studio</h2>
+    <p>Encrypted credentials found. Enter your passphrase to restore your API key and GitHub token.</p>
+    <div class="modal-input-wrap">
+      <div class="modal-label">Passphrase</div>
+      <input class="modal-input" id="unlock-input" type="password" placeholder="Your passphrase…" onkeydown="if(event.key==='Enter') unlockCredentials()" />
+    </div>
+    <div id="unlock-error" style="color:#ff7e7e;font-family:'DM Mono',monospace;font-size:11px;margin-top:4px;display:none">Incorrect passphrase — credentials could not be decrypted.</div>
+    <button class="modal-submit" onclick="unlockCredentials()">Unlock →</button>
+    <div style="text-align:center;margin-top:8px">
+      <button onclick="clearSavedCredentials()" style="background:none;border:none;color:var(--muted);font-family:'DM Mono',monospace;font-size:11px;cursor:pointer;text-decoration:underline">Clear saved credentials and start fresh</button>
+    </div>
   </div>
 </div>
 
 <header>
   <div class="logo">Agent <span>Studio</span></div>
-  <span id="version-badge" onclick="toggleChangelog()" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);padding:2px 8px;border:1px solid var(--border);border-radius:5px;letter-spacing:0.05em;cursor:pointer;transition:all 0.15s" onmouseover="this.style.borderColor='var(--muted)';this.style.color='var(--text)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'" title="Click to see changelog">v1.8.0</span>
+  <span id="version-badge" onclick="toggleChangelog()" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);padding:2px 8px;border:1px solid var(--border);border-radius:5px;letter-spacing:0.05em;cursor:pointer;transition:all 0.15s" onmouseover="this.style.borderColor='var(--muted)';this.style.color='var(--text)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'" title="Click to see changelog">v1.10.0</span>
   <div class="status-bar">
     <span><span class="status-dot"></span>7 agents online</span>
     <span>Flutter · Dart 3 · Mobile</span>
@@ -1977,7 +2018,7 @@ Rules:
   }
 };
 
-const DASHBOARD_VERSION = '1.8.0';
+const DASHBOARD_VERSION = '1.10.0';
 
 let currentAgent = 'coding';
 let conversations = { coding: [], design: [], review: [], fullstack: [], requirements: [], lead: [], orchestrator: [] };
@@ -2126,11 +2167,99 @@ function loadPersistedState() {
     const stack = localStorage.getItem('agentStudio_stack');
     if (stack && STACKS[stack]) currentStack = stack;
   } catch(e) { /* ignore parse errors */ }
+
+  // If encrypted credentials are stored, show the unlock modal instead of the connect modal
+  if (localStorage.getItem('agentStudio_encCredentials')) {
+    document.getElementById('api-modal').style.display = 'none';
+    document.getElementById('unlock-modal').style.display = 'flex';
+    setTimeout(() => document.getElementById('unlock-input').focus(), 100);
+  }
 }
 
 // ── Credentials ──────────────────────────────────────────────────────────────
 
-function saveApiKey() {
+// Web Crypto AES-GCM encrypt/decrypt — passphrase never stored
+async function deriveKey(passphrase, salt) {
+  const enc = new TextEncoder();
+  const raw = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 250000, hash: 'SHA-256' },
+    raw,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptCredentials(passphrase, payload) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv   = crypto.getRandomValues(new Uint8Array(12));
+  const key  = await deriveKey(passphrase, salt);
+  const enc  = new TextEncoder();
+  const ct   = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(JSON.stringify(payload)));
+  // Pack: salt(16) + iv(12) + ciphertext → base64
+  const combined = new Uint8Array(16 + 12 + ct.byteLength);
+  combined.set(salt, 0); combined.set(iv, 16); combined.set(new Uint8Array(ct), 28);
+  return btoa(String.fromCharCode(...combined));
+}
+
+async function decryptCredentials(passphrase, b64) {
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const salt  = bytes.slice(0, 16);
+  const iv    = bytes.slice(16, 28);
+  const ct    = bytes.slice(28);
+  const key   = await deriveKey(passphrase, salt);
+  const dec   = new TextDecoder();
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+  return JSON.parse(dec.decode(plain));
+}
+
+function togglePassphraseRow(show) {
+  document.getElementById('passphrase-row').style.display = show ? '' : 'none';
+  document.getElementById('modal-note-text').innerHTML = show
+    ? 'Keys encrypted with AES-256-GCM · Passphrase never stored · <button onclick="clearSavedCredentials()" style="background:none;border:none;color:var(--muted);font-family:\'DM Mono\',monospace;font-size:11px;cursor:pointer;text-decoration:underline">clear saved</button>'
+    : 'Keys stored in memory only · GitHub token needs <code style="font-size:10px;background:var(--surface2);padding:1px 5px;border-radius:3px">project</code> + <code style="font-size:10px;background:var(--surface2);padding:1px 5px;border-radius:3px">repo</code> scopes';
+}
+
+function clearSavedCredentials() {
+  localStorage.removeItem('agentStudio_encCredentials');
+  document.getElementById('unlock-modal').style.display = 'none';
+  document.getElementById('save-creds-toggle').checked = false;
+  togglePassphraseRow(false);
+  promptApiKey();
+}
+
+async function unlockCredentials() {
+  const passphrase = document.getElementById('unlock-input').value;
+  if (!passphrase) { document.getElementById('unlock-input').focus(); return; }
+  const b64 = localStorage.getItem('agentStudio_encCredentials');
+  if (!b64) { document.getElementById('unlock-modal').style.display = 'none'; promptApiKey(); return; }
+  try {
+    const creds = await decryptCredentials(passphrase, b64);
+    apiKey = creds.apiKey || '';
+    ghToken = creds.ghToken || '';
+    // ghRepo already loaded from plaintext localStorage
+    document.getElementById('unlock-modal').style.display = 'none';
+    document.getElementById('unlock-error').style.display = 'none';
+    // Update header indicators
+    if (apiKey) {
+      document.getElementById('key-dot').classList.add('connected');
+      document.getElementById('key-label').textContent = apiKey.slice(0, 12) + '···';
+    }
+    if (ghToken && ghRepo) {
+      document.getElementById('gh-dot').classList.add('connected');
+      document.getElementById('gh-label').textContent = ghRepo;
+      startPolling();
+    }
+    renderOrchestratorPanel();
+  } catch(e) {
+    document.getElementById('unlock-error').style.display = 'block';
+    document.getElementById('unlock-input').style.borderColor = '#ff7e7e';
+    document.getElementById('unlock-input').select();
+  }
+}
+
+async function saveApiKey() {
   const val = document.getElementById('api-key-input').value.trim();
   if (!val.startsWith('sk-ant-')) {
     document.getElementById('api-key-input').style.borderColor = '#ff7e7e';
@@ -2159,6 +2288,23 @@ function saveApiKey() {
     document.getElementById('gh-dot').classList.remove('connected');
     document.getElementById('gh-label').textContent = 'no github';
     stopPolling();
+  }
+
+  // Optionally encrypt and persist credentials
+  const saveToggle = document.getElementById('save-creds-toggle');
+  if (saveToggle?.checked) {
+    const passphrase = document.getElementById('passphrase-input').value;
+    if (!passphrase) {
+      document.getElementById('passphrase-input').style.borderColor = '#ff7e7e';
+      document.getElementById('passphrase-input').focus();
+      return;
+    }
+    try {
+      const encrypted = await encryptCredentials(passphrase, { apiKey: val, ghToken: ghToken });
+      localStorage.setItem('agentStudio_encCredentials', encrypted);
+    } catch(e) {
+      console.error('Encryption failed:', e);
+    }
   }
 
   document.getElementById('api-modal').style.display = 'none';
@@ -4240,6 +4386,25 @@ async function runAgentLoop() {
 // ── Changelog ─────────────────────────────────────────────────────────────────
 
 const CHANGELOG = [
+  {
+    version: '1.10.0', label: 'Encrypted credential storage', date: 'Mar 2026',
+    items: [
+      'Optional "Save credentials encrypted" toggle in the connect modal',
+      'AES-256-GCM encryption via Web Crypto API — passphrase never stored',
+      'PBKDF2 key derivation with 250,000 iterations and random salt + IV per save',
+      'Unlock modal shown on reload when encrypted credentials are present',
+      'Wrong passphrase shows error without wiping stored blob',
+      '"Clear saved credentials" option removes encrypted blob and resets to in-memory mode',
+    ]
+  },
+  {
+    version: '1.9.0', label: 'Version badge & changelog', date: 'Mar 2026',
+    items: [
+      'Version number displayed in header — click to open changelog modal',
+      'Full scrollable changelog with version, label, date and bullet points per release',
+      'DASHBOARD_VERSION constant — bump once to update badge and changelog header',
+    ]
+  },
   {
     version: '1.8.0', label: 'Retry & resilience', date: 'Mar 2026',
     items: [
