@@ -5050,7 +5050,12 @@ function autoResize(el) {
 function clearChat() {
   conversations[currentAgent] = [];
   saveConversations();
-  renderMessages();
+  if (currentAgent === 'orchestrator') {
+    loopState = null;
+    renderOrchestratorPanel();
+  } else {
+    renderMessages();
+  }
 }
 
 function clearAllChats() {
