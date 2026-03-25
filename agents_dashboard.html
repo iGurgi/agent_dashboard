@@ -1112,7 +1112,7 @@
 
 <header>
   <div class="logo">Agent <span>Studio</span></div>
-  <span id="version-badge" onclick="toggleChangelog()" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);padding:2px 8px;border:1px solid var(--border);border-radius:5px;letter-spacing:0.05em;cursor:pointer;transition:all 0.15s" onmouseover="this.style.borderColor='var(--muted)';this.style.color='var(--text)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'" title="Click to see changelog"></span>
+  <span id="version-badge" onclick="toggleChangelog()" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);padding:2px 8px;border:1px solid var(--border);border-radius:5px;letter-spacing:0.05em;cursor:pointer;transition:all 0.15s" onmouseover="this.style.borderColor='var(--muted)';this.style.color='var(--text)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'" title="Click to see changelog">v1.8.0</span>
   <div class="status-bar">
     <span><span class="status-dot"></span>7 agents online</span>
     <span>Flutter · Dart 3 · Mobile</span>
@@ -1627,7 +1627,6 @@ function setStack(stackId) {
   if (!STACKS[stackId]) return;
   currentStack = stackId;
   localStorage.setItem('agentStudio_stack', stackId);
-  document.getElementById('version-badge').textContent = 'v' + DASHBOARD_VERSION;
   renderStackGrid();
   updateStackHeaderBadge();
   updateAgentNavTags();
