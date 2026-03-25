@@ -21,6 +21,7 @@
     --accent-full: #7ebbe8;
     --accent-req: #ff9f7e;
     --accent-lead: #c4b5fd;
+    --accent-arch: #86efac;
     --accent-orch: #67e8f9;
     --active: #ffffff;
   }
@@ -221,6 +222,10 @@
   .badge-fullstack { color: var(--accent-full); border-color: rgba(126,187,232,0.4); background: rgba(126,187,232,0.06); }
   .badge-requirements { color: var(--accent-req); border-color: rgba(255,159,126,0.4); background: rgba(255,159,126,0.06); }
   .badge-lead { color: var(--accent-lead); border-color: rgba(196,181,253,0.4); background: rgba(196,181,253,0.06); }
+  .badge-architecture { color: var(--accent-arch); border-color: rgba(134,239,172,0.4); background: rgba(134,239,172,0.06); }
+  .send-btn.active-architecture { background: rgba(134,239,172,0.15); color: var(--accent-arch); }
+  .agent-btn[data-agent="architecture"] .agent-icon { border-color: rgba(134,239,172,0.3); background: rgba(134,239,172,0.05); }
+  .agent-btn[data-agent="architecture"].active::before { background: var(--accent-arch); }
 
   .clear-btn {
     font-family: 'DM Mono', monospace;
@@ -1153,9 +1158,9 @@
 
 <header>
   <div class="logo">Agent <span>Studio</span></div>
-  <span id="version-badge" onclick="toggleChangelog()" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);padding:2px 8px;border:1px solid var(--border);border-radius:5px;letter-spacing:0.05em;cursor:pointer;transition:all 0.15s" onmouseover="this.style.borderColor='var(--muted)';this.style.color='var(--text)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'" title="Click to see changelog">v1.10.0</span>
+  <span id="version-badge" onclick="toggleChangelog()" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);padding:2px 8px;border:1px solid var(--border);border-radius:5px;letter-spacing:0.05em;cursor:pointer;transition:all 0.15s" onmouseover="this.style.borderColor='var(--muted)';this.style.color='var(--text)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'" title="Click to see changelog">v1.11.0</span>
   <div class="status-bar">
-    <span><span class="status-dot"></span>7 agents online</span>
+    <span><span class="status-dot"></span>8 agents online</span>
     <span>Flutter · Dart 3 · Mobile</span>
     <span class="key-indicator" id="poll-indicator" onclick="togglePolling()" title="Click to toggle PR auto-review" style="display:none">
       <span class="key-dot" id="poll-dot" style="background:var(--muted)"></span>
@@ -1218,6 +1223,14 @@
       <div class="agent-meta">
         <div class="agent-name">Requirements</div>
         <div class="agent-tag">Analyse · Clarify · Break Down</div>
+      </div>
+    </button>
+
+    <button class="agent-btn" data-agent="architecture" onclick="selectAgent('architecture')">
+      <div class="agent-icon">🏛</div>
+      <div class="agent-meta">
+        <div class="agent-name">Architecture</div>
+        <div class="agent-tag" id="arch-tag">Versions · Deps · Tooling</div>
       </div>
     </button>
 
@@ -1309,6 +1322,7 @@ const STACKS = {
       review:    ['Review this widget build()', 'Check my BLoC implementation', 'PR#1 — review latest PR'],
       fullstack: ['Design a Flutter + Supabase app', 'Plan a Firebase Auth flow', 'Set up Codemagic CI/CD'],
     },
+    architectureHint: `Produce a locked architecture spec for Flutter/Dart. Key areas: Flutter SDK version, Dart SDK version, exact pub.dev package versions (riverpod, dio, go_router, freezed, hive/isar, etc.), flutter_test and mocktail versions, Android compileSdk/minSdk/targetSdk, iOS deployment target, Dart analysis_options.yaml rules, known conflicts between pub packages.`,
     ciWorkflow: `name: Flutter CI
 on:
   pull_request:
@@ -1368,6 +1382,7 @@ Warnings: null-safety gotchas, breaking API changes, platform-specific issues.`
       review:    ['Review my useEffect deps', 'Check for re-render issues', 'PR#1 — review latest PR'],
       fullstack: ['Set up React Query + Axios', 'Plan a Vite + tRPC stack', 'Configure Vercel deployment'],
     },
+    architectureHint: `Produce a locked architecture spec for React/TypeScript. Key areas: React version, TypeScript version, Vite version, exact npm package versions (react-query, zustand, react-router, axios, shadcn/ui, radix-ui, etc.), ESLint + Prettier config versions, Vitest version, Node.js engine requirement, known peer dependency conflicts in npm.`,
     ciWorkflow: `name: React CI
 on:
   pull_request:
@@ -1427,6 +1442,7 @@ Warnings: hook rules violations, circular dependencies, bundle size impacts, bre
       review:    ['Review Server/Client boundaries', 'Check Suspense usage', 'PR#1 — review latest PR'],
       fullstack: ['Set up Prisma + Neon DB', 'Plan NextAuth.js v5 auth', 'Configure Vercel Edge middleware'],
     },
+    architectureHint: `Produce a locked architecture spec for Next.js/TypeScript. Key areas: Next.js version, React version, TypeScript version, exact npm versions (prisma, @auth/nextjs, next-themes, shadcn/ui, etc.), Node.js engine version, Vercel runtime version, ESLint config, Playwright version, known App Router incompatibilities with third-party packages.`,
     ciWorkflow: `name: Next.js CI
 on:
   pull_request:
@@ -1486,6 +1502,7 @@ Warnings: Server/Client boundary mistakes, missing Suspense, cache invalidation 
       review:    ['Review my async error handling', 'Check for SQL injection risks', 'PR#1 — review latest PR'],
       fullstack: ['Set up Docker + Postgres', 'Plan a Bull queue worker', 'Configure Railway deployment'],
     },
+    architectureHint: `Produce a locked architecture spec for Node.js/Express/TypeScript. Key areas: Node.js version, Express version, TypeScript version, exact npm versions (prisma, zod, passport, bull, ioredis, winston, etc.), Jest/Vitest version, ESLint config, Docker base image version, known breaking changes between major Express or Prisma versions.`,
     ciWorkflow: `name: Node.js CI
 on:
   pull_request:
@@ -1545,6 +1562,7 @@ Warnings: breaking API contract changes, missing db migrations, secrets handling
       review:    ['Review my async endpoint', 'Check for blocking calls', 'PR#1 — review latest PR'],
       fullstack: ['Set up Alembic migrations', 'Plan a Celery task queue', 'Configure Docker + Postgres'],
     },
+    architectureHint: `Produce a locked architecture spec for Python/FastAPI. Key areas: Python version, FastAPI version, Pydantic version (v1 vs v2 matters enormously), SQLAlchemy version (1.4 vs 2.0 API differs), exact pip package versions (alembic, httpx, pytest-asyncio, ruff, mypy, celery, etc.), known Pydantic v2 migration issues, SQLAlchemy 2.0 async patterns.`,
     ciWorkflow: `name: Python CI
 on:
   pull_request:
@@ -1604,6 +1622,7 @@ Warnings: breaking schema changes, missing db migrations, blocking-in-async pitf
       review:    ['Review my async/await usage', 'Check for IDisposable leaks', 'PR#1 — review latest PR'],
       fullstack: ['Set up EF Core + Postgres', 'Plan a Hangfire background job', 'Configure Azure App Service'],
     },
+    architectureHint: `Produce a locked architecture spec for C#/.NET. Key areas: .NET SDK version, ASP.NET Core version, EF Core version, exact NuGet package versions (MediatR, FluentValidation, Serilog, Hangfire, Polly, etc.), C# language version, nullable reference types setting, xUnit + Testcontainers versions, known breaking changes between EF Core major versions.`,
     ciWorkflow: `name: .NET CI
 on:
   pull_request:
@@ -1646,22 +1665,34 @@ Warnings: breaking EF migrations, .Result deadlock risks, missing cancellation t
 };
 
 let currentStack = 'flutter';
+let architectureSpec = ''; // Set by Architecture agent; injected into Coding/Design/Lead/Fullstack prompts
 
 function getAgentSystem(agentKey) {
   const stackPrompt = STACKS[currentStack]?.agents[agentKey] || '';
   const basePrompt  = AGENTS[agentKey]?.system || '';
 
-  // requirements and lead dev have strict JSON output formats that tryParseBreakdown
-  // and tryParseLeadBreakdown rely on — always use the full base prompt which contains
-  // the complete schema, and prepend the stack context so the agent knows the tech stack.
-  if (agentKey === 'requirements' || agentKey === 'lead') {
-    if (stackPrompt && basePrompt) {
-      return `Stack context: ${stackPrompt}\n\n${basePrompt}`;
-    }
-    return basePrompt || stackPrompt;
+  // Architecture agent gets its base prompt with a stack-specific hint prepended
+  if (agentKey === 'architecture') {
+    const hint = STACKS[currentStack]?.architectureHint || '';
+    return hint ? `${hint}\n\n${basePrompt}` : basePrompt;
   }
 
-  return stackPrompt || basePrompt;
+  // Requirements and lead dev must use the full base prompt (contains JSON schema).
+  // Prepend stack context so the agent knows the tech stack.
+  if (agentKey === 'requirements' || agentKey === 'lead') {
+    const specNote = architectureSpec ? `\n\n## Architecture spec (must follow)\n${architectureSpec}` : '';
+    if (stackPrompt && basePrompt) {
+      return `Stack context: ${stackPrompt}${specNote}\n\n${basePrompt}`;
+    }
+    return (basePrompt || stackPrompt) + specNote;
+  }
+
+  // For coding, design, fullstack — inject architecture spec if available
+  const base = stackPrompt || basePrompt;
+  if (architectureSpec && ['coding', 'design', 'fullstack'].includes(agentKey)) {
+    return `${base}\n\n## Architecture spec (must follow exactly)\n${architectureSpec}`;
+  }
+  return base;
 }
 
 function setStack(stackId) {
@@ -1686,6 +1717,9 @@ function updateAgentNavTags() {
       if (tagEl) tagEl.textContent = tagText;
     }
   });
+  // Architecture tag always reflects current stack name
+  const archTag = document.querySelector('.agent-btn[data-agent="architecture"] .agent-tag');
+  if (archTag) archTag.textContent = `Versions · Deps · ${stack.name || 'Tooling'}`;
   // Patch AGENTS suggestions/emptyDesc so empty state reflects the stack
   Object.entries(suggs).forEach(([agentKey, suggestions]) => {
     if (AGENTS[agentKey]) AGENTS[agentKey].suggestions = suggestions;
@@ -1887,6 +1921,46 @@ Format all findings with severity ratings: 🔴 Critical / 🟡 Warning / 🔵 I
 
 Provide complete, production-ready guidance with clear reasoning for technology choices. Always consider mobile constraints: battery, connectivity, screen size, and platform differences.`
   },
+  architecture: {
+    name: 'Architecture Agent',
+    icon: '🏛',
+    badge: 'ARCHITECTURE',
+    badgeClass: 'badge-architecture',
+    btnClass: 'active-architecture',
+    emptyIcon: '🏛',
+    emptyTitle: 'Architecture Agent ready',
+    emptyDesc: 'Paste a requirements breakdown or describe a feature. I will produce a locked dependency and tooling spec that all downstream agents must follow.',
+    suggestions: ['Define versions for a new feature', 'Audit my current dependency tree', 'Resolve a package conflict'],
+    placeholder: 'Paste a task or requirements breakdown…',
+    system: `You are a Senior Software Architect Agent. Your sole job is to produce a precise, locked architecture and dependency specification that downstream coding agents must follow exactly.
+
+**Your output format** — always respond with a markdown document containing these sections:
+
+## Stack
+One line: framework, language, and version. E.g. "Flutter 3.22 · Dart 3.4 · Material 3"
+
+## Locked dependencies
+A table with four columns: Package | Version (exact, pinned) | Purpose | Notes
+Pin to exact patch versions (e.g. 2.6.1 not ^2.6). Include every direct dependency relevant to the feature.
+
+## Tooling
+List: build tool version, test runner, linter config, CI runner OS and image.
+
+## Constraints & known conflicts
+Bullet list of known incompatibilities, breaking changes between versions, or patterns to avoid. Be specific.
+
+## Integration points
+Any external services (APIs, databases, auth providers), their SDK package names and versions, and any config keys needed.
+
+## Patterns to use
+Specific architectural patterns agents must follow for this feature: folder structure, naming conventions, error handling strategy, state management approach.
+
+**Rules:**
+- Never output vague ranges (^, >=, ~). Every version must be exact.
+- Research version compatibility before pinning — if two packages conflict at their latest versions, pin an older one and explain why.
+- If the request does not have enough context to pin versions, ask one focused clarifying question before outputting the spec.
+- Output ONLY the spec document — no preamble, no "here is your spec".`
+  },
   requirements: {
     name: 'Requirements Agent',
     icon: '◎',
@@ -2018,10 +2092,10 @@ Rules:
   }
 };
 
-const DASHBOARD_VERSION = '1.10.0';
+const DASHBOARD_VERSION = '1.11.0';
 
 let currentAgent = 'coding';
-let conversations = { coding: [], design: [], review: [], fullstack: [], requirements: [], lead: [], orchestrator: [] };
+let conversations = { coding: [], design: [], review: [], fullstack: [], requirements: [], architecture: [], lead: [], orchestrator: [] };
 let isLoading = false;
 let apiKey = '';
 let ghToken = '';
@@ -2151,7 +2225,7 @@ function loadPersistedState() {
     if (saved) {
       const parsed = JSON.parse(saved);
       // Merge into defaults — ensures any new agent keys added since last save always exist
-      const defaults = { coding: [], design: [], review: [], fullstack: [], requirements: [], lead: [] };
+      const defaults = { coding: [], design: [], review: [], fullstack: [], requirements: [], architecture: [], lead: [] };
       conversations = { ...defaults, ...parsed };
       // Ensure every known agent key exists even if parsed data was stale
       Object.keys(defaults).forEach(k => { if (!Array.isArray(conversations[k])) conversations[k] = []; });
@@ -2275,6 +2349,7 @@ async function saveApiKey() {
     ghProjectId = '';
     ghProjectUrl = '';
     repoContextCache = null;   // invalidate repo context cache on credential change
+    architectureSpec = '';        // clear architecture spec — new repo context
     localStorage.setItem('agentStudio_ghRepo', repo);
     // Restart polling with new credentials
     stopPolling();
@@ -2931,6 +3006,7 @@ async function fetchAndRouteIssue(issueNumber) {
       const reply = data.content?.[0]?.text || 'Sorry, I encountered an error.';
       const msgMeta = { role: 'assistant', content: reply, issueNumber: issue.number };
       if (agent === 'lead') msgMeta.parentIssueNumber = issue.number;
+      if (agent === 'architecture') architectureSpec = reply.trim();
       conversations[agent].push(msgMeta);
 
       // Post explanation as comment (strip the file_changes block from comment)
@@ -3605,9 +3681,9 @@ function renderLoopEmpty() {
 function renderLoopStep(step, idx) {
   const statusClass = { running:'running', done:'done', failed:'failed', waiting:'waiting', paused:'paused' }[step.status] || 'waiting';
   const statusLabel = { running:'running…', done:'done', failed:'failed', waiting:'queued', paused:'paused' }[step.status] || step.status;
-  const agentColors = { coding:'var(--accent-code)', design:'var(--accent-design)', review:'var(--accent-review)', fullstack:'var(--accent-full)', requirements:'var(--accent-req)', lead:'var(--accent-lead)', orchestrator:'var(--accent-orch)' };
+  const agentColors = { coding:'var(--accent-code)', design:'var(--accent-design)', review:'var(--accent-review)', fullstack:'var(--accent-full)', requirements:'var(--accent-req)', architecture:'var(--accent-arch)', lead:'var(--accent-lead)', orchestrator:'var(--accent-orch)' };
   const color = agentColors[step.agent] || 'var(--muted)';
-  const agentIcons = { coding:'⚡', design:'✦', review:'◈', fullstack:'◉', requirements:'◎', lead:'❖', orchestrator:'⟳' };
+  const agentIcons = { coding:'⚡', design:'✦', review:'◈', fullstack:'◉', requirements:'◎', architecture:'🏛', lead:'❖', orchestrator:'⟳' };
   const icon = agentIcons[step.agent] || '·';
 
   let detail = '';
@@ -3988,6 +4064,28 @@ async function runAgentLoop() {
     } catch(e) {
       updateStep(s2, { status: 'failed', error: e.message });
       ls.status = 'error'; renderOrchestratorPanel(); return;
+    }
+    if (ls.aborted) return;
+
+    // ── Step 2.5: architecture spec ──────────────────────────────────────────
+    const sArch = addLoopStep('architecture', 'Architecture & dependency spec', 'running');
+    try {
+      const stackHint = STACKS[currentStack]?.architectureHint || '';
+      const archPrompt =
+        `Feature: ${issue.title}\n\n` +
+        `${issue.body ? 'Context:\n' + issue.body + '\n\n' : ''}` +
+        `Requirements breakdown summary:\n` +
+        breakdown.tasks.map(t => `- [${t.agent}] ${t.title}`).join('\n') +
+        `\n\n${stackHint ? 'Stack focus:\n' + stackHint + '\n\n' : ''}` +
+        `Produce the locked architecture and dependency spec now.`;
+
+      const archReply = await callAgent('architecture', archPrompt, 3000, { stepRef: sArch });
+      architectureSpec = archReply.trim();
+      updateStep(sArch, { status: 'done', detail: `Spec locked — ${architectureSpec.split('\n').length} lines` });
+    } catch(e) {
+      updateStep(sArch, { status: 'failed', error: e.message });
+      // Non-fatal — continue without spec; agents will use their own judgement
+      architectureSpec = '';
     }
     if (ls.aborted) return;
 
@@ -4386,6 +4484,18 @@ async function runAgentLoop() {
 // ── Changelog ─────────────────────────────────────────────────────────────────
 
 const CHANGELOG = [
+  {
+    version: '1.11.0', label: 'Architecture Agent', date: 'Mar 2026',
+    items: [
+      'New 🏛 Architecture Agent — produces locked dependency and tooling specs',
+      'Sits between Requirements and Lead Dev in the pipeline and in the nav',
+      'Per-stack hints guide the agent toward the right version constraints',
+      'Spec auto-injected into Coding, Design, Full-Stack, and Lead Dev system prompts',
+      'Auto Loop step 2.5 runs architecture after requirements; non-fatal if it fails',
+      'Chat mode: spec captured and applied to all subsequent agent calls in session',
+      'Spec cleared when GitHub credentials change (new repo context)',
+    ]
+  },
   {
     version: '1.10.0', label: 'Encrypted credential storage', date: 'Mar 2026',
     items: [
@@ -4945,7 +5055,7 @@ function clearChat() {
 
 function clearAllChats() {
   if (!confirm('Clear all conversations across all agents?')) return;
-  conversations = { coding: [], design: [], review: [], fullstack: [], requirements: [], lead: [], orchestrator: [] };
+  conversations = { coding: [], design: [], review: [], fullstack: [], requirements: [], architecture: [], lead: [], orchestrator: [] };
   saveConversations();
   renderMessages();
 }
