@@ -1552,7 +1552,20 @@ Warnings: breaking EF migrations, .Result deadlock risks, missing cancellation t
 let currentStack = 'flutter';
 
 function getAgentSystem(agentKey) {
-  return STACKS[currentStack]?.agents[agentKey] || AGENTS[agentKey]?.system || '';
+  const stackPrompt = STACKS[currentStack]?.agents[agentKey] || '';
+  const basePrompt  = AGENTS[agentKey]?.system || '';
+
+  // requirements and lead dev have strict JSON output formats that tryParseBreakdown
+  // and tryParseLeadBreakdown rely on — always use the full base prompt which contains
+  // the complete schema, and prepend the stack context so the agent knows the tech stack.
+  if (agentKey === 'requirements' || agentKey === 'lead') {
+    if (stackPrompt && basePrompt) {
+      return `Stack context: ${stackPrompt}\n\n${basePrompt}`;
+    }
+    return basePrompt || stackPrompt;
+  }
+
+  return stackPrompt || basePrompt;
 }
 
 function setStack(stackId) {
