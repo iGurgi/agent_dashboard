@@ -3879,12 +3879,14 @@ function continueLoopAfterPause() {
 // All Anthropic API calls go through this function.
 
 async function claudeFetch(body, { maxRetries = 4, onRetry } = {}) {
+  // Strip _devAgent before sending — it's our internal tag, not an Anthropic API field
+  const { _devAgent, ...apiBody } = body;
   let attempt = 0;
   while (true) {
-    // Dev log: capture the outgoing prompt
-    if (devLogEnabled && body._devAgent) {
-      const lastMsg = (body.messages || []).slice(-1)[0];
-      devLog(body._devAgent, 'prompt', `[system]\n${(body.system||'').slice(0,2000)}\n\n[user]\n${lastMsg?.content || ''}`);
+    // Dev log: capture the outgoing prompt (only on first attempt to avoid duplicates)
+    if (attempt === 0 && devLogEnabled && _devAgent) {
+      const lastMsg = (apiBody.messages || []).slice(-1)[0];
+      devLog(_devAgent, 'prompt', `[system]\n${(apiBody.system||'').slice(0,2000)}\n\n[user]\n${lastMsg?.content || ''}`);
     }
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -3894,15 +3896,15 @@ async function claudeFetch(body, { maxRetries = 4, onRetry } = {}) {
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true'
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(apiBody)
     });
 
     // Always parse — even error responses are valid JSON
     const data = await response.json();
 
     // Dev log: capture the response
-    if (devLogEnabled && body._devAgent && response.ok && !data.error) {
-      devLog(body._devAgent, 'response', (data.content||[])[0]?.text || '');
+    if (devLogEnabled && _devAgent && response.ok && !data.error) {
+      devLog(_devAgent, 'response', (data.content||[])[0]?.text || '');
     }
     // Success
     if (response.ok && !data.error) return data;
