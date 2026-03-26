@@ -674,6 +674,8 @@
   .loop-btn.primary { background: rgba(103,232,249,0.1); color: var(--accent-orch); border-color: rgba(103,232,249,0.3); }
   .loop-btn.primary:hover:not(:disabled) { background: rgba(103,232,249,0.18); }
   .loop-btn.danger { color: #ff7e7e; border-color: rgba(255,126,126,0.3); }
+  .loop-btn.retry { color: var(--accent-review); border-color: rgba(232,196,126,0.4); background: rgba(232,196,126,0.06); }
+  .loop-btn.skip  { color: var(--muted); }
 
   .loop-meta {
     font-family: 'DM Mono', monospace;
@@ -1253,7 +1255,7 @@
 
 <header>
   <div class="logo">Agent <span>Studio</span></div>
-  <span id="version-badge" onclick="toggleChangelog()" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);padding:2px 8px;border:1px solid var(--border);border-radius:5px;letter-spacing:0.05em;cursor:pointer;transition:all 0.15s" onmouseover="this.style.borderColor='var(--muted)';this.style.color='var(--text)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'" title="Click to see changelog">v1.12.0</span>
+  <span id="version-badge" onclick="toggleChangelog()" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);padding:2px 8px;border:1px solid var(--border);border-radius:5px;letter-spacing:0.05em;cursor:pointer;transition:all 0.15s" onmouseover="this.style.borderColor='var(--muted)';this.style.color='var(--text)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'" title="Click to see changelog">v1.13.0</span>
   <div class="status-bar">
     <span><span class="status-dot"></span>8 agents online</span>
     <button id="devlog-toggle" onclick="openDevLog()" title="Dev log — click to view prompts &amp; responses">dev log</button>
@@ -2188,7 +2190,7 @@ Rules:
   }
 };
 
-const DASHBOARD_VERSION = '1.12.0';
+const DASHBOARD_VERSION = '1.13.0';
 
 let currentAgent = 'coding';
 let conversations = { coding: [], design: [], review: [], fullstack: [], requirements: [], architecture: [], lead: [], orchestrator: [] };
@@ -2842,9 +2844,74 @@ function tryParseFileChanges(text) {
   try {
     const match = text.match(/```file_changes\s*([\s\S]*?)```/);
     if (!match) return null;
-    const parsed = JSON.parse(match[1].trim());
-    if (parsed.files && Array.isArray(parsed.files)) return parsed;
-  } catch(e) {}
+
+    let jsonStr = match[1].trim();
+
+    // Attempt 1: parse as-is
+    try {
+      const parsed = JSON.parse(jsonStr);
+      if (parsed.files && Array.isArray(parsed.files)) return parsed;
+    } catch(e1) {
+      devLog('orchestrator', 'response',
+        '[tryParseFileChanges] JSON.parse failed: ' + e1.message + '\n\nAttempting repair…');
+    }
+
+    // Attempt 2: repair literal newlines inside JSON string values
+    // Walk character by character so we don't need lookbehind regex
+    let fixed = '';
+    let inStr = false, esc = false;
+    for (let i = 0; i < jsonStr.length; i++) {
+      const c = jsonStr[i];
+      if (esc)          { fixed += c; esc = false; continue; }
+      if (c === '\\')   { esc = true; fixed += c; continue; }
+      if (c === '"')    { inStr = !inStr; fixed += c; continue; }
+      if (inStr && c === '\n') { fixed += '\\n'; continue; }
+      if (inStr && c === '\r') { fixed += '\\r'; continue; }
+      fixed += c;
+    }
+    // Also strip trailing commas before } or ]
+    fixed = fixed.replace(/,\s*([}\]])/g, '$1');
+
+    try {
+      const parsed2 = JSON.parse(fixed);
+      if (parsed2.files && Array.isArray(parsed2.files)) return parsed2;
+    } catch(e2) { /* fall through to attempt 3 */ }
+
+    // Attempt 3: extract files array manually using a more lenient approach
+    // Pull out each file object individually
+    const filesMatch = jsonStr.match(/"files"\s*:\s*\[([\s\S]*)\]\s*}/);
+    if (!filesMatch) return null;
+
+    // Reconstruct a minimal valid object
+    const branchMatch = jsonStr.match(/"branch_suffix"\s*:\s*"([^"]+)"/);
+    const titleMatch  = jsonStr.match(/"pr_title"\s*:\s*"([^"]+)"/);
+
+    const minimal = {
+      branch_suffix: branchMatch ? branchMatch[1] : 'agent-fix',
+      pr_title:  titleMatch  ? titleMatch[1]  : 'Agent changes',
+      pr_body:   '',
+      files: []
+    };
+
+    // Extract individual file objects with path/operation/content
+    const filePattern = /\{[^{}]*"path"\s*:\s*"([^"]+)"[^{}]*"operation"\s*:\s*"([^"]+)"[^{}]*"content"\s*:\s*"((?:[^"\\]|\\.)*)"/gs;
+    let fm;
+    while ((fm = filePattern.exec(jsonStr)) !== null) {
+      minimal.files.push({
+        path: fm[1],
+        operation: fm[2],
+        content: fm[3].replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"')
+      });
+    }
+
+    if (minimal.files.length > 0) {
+      devLog('orchestrator', 'response',
+        `[tryParseFileChanges] Repair extracted ${minimal.files.length} file(s) via fallback parser`);
+      return minimal;
+    }
+  } catch(e) {
+    devLog('orchestrator', 'response', '[tryParseFileChanges] Fatal: ' + e.message);
+  }
   return null;
 }
 
@@ -3216,7 +3283,13 @@ async function getLatestCommitSha(branch) {
 
 async function createBranch(branchName, fromSha) {
   const [owner, repo] = ghRepo.split('/');
-  await ghRest(`/repos/${owner}/${repo}/git/refs`, 'POST', { ref: `refs/heads/${branchName}`, sha: fromSha });
+  try {
+    await ghRest(`/repos/${owner}/${repo}/git/refs`, 'POST', { ref: `refs/heads/${branchName}`, sha: fromSha });
+  } catch(e) {
+    // If branch already exists (422 "Reference already exists"), that's fine — use it as-is
+    if (e.message && (e.message.includes('already exists') || e.message.includes('422'))) return;
+    throw e;
+  }
 }
 
 async function upsertFile(path, content, message, branch, existingSha = null) {
@@ -3457,7 +3530,8 @@ async function fetchAndReviewPR(prNumber) {
         model: 'claude-sonnet-4-20250514',
         max_tokens: 3000,
         system,
-        messages
+        messages,
+        _devAgent: 'review'
       });
     if (data.error) {
       conversations['review'].push({ role: 'assistant', content: 'API error: ' + data.error.message });
@@ -3727,10 +3801,16 @@ function renderOrchestratorPanel() {
             <input id="loop-issue-input" type="number" placeholder="#issue" min="1" onkeydown="if(event.key==='Enter') startLoop()"/>
             <button class="loop-btn primary" onclick="startLoop()" ${!apiKey ? 'disabled title="Connect API key first"' : ''}>⟳ Start loop</button>
           </div>
-          <label style="display:flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);cursor:pointer">
-            <input type="checkbox" id="loop-human-gate" style="width:13px;height:13px;" ${ls?.humanGate ? 'checked' : ''} onchange="loopState && (loopState.humanGate = this.checked)">
-            pause for approval before merge
-          </label>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <label style="display:flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);cursor:pointer">
+              <input type="checkbox" id="loop-human-gate" style="width:13px;height:13px;" ${ls?.humanGate ? 'checked' : ''} onchange="loopState && (loopState.humanGate = this.checked)">
+              pause for approval before merge
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);cursor:pointer">
+              <input type="checkbox" id="loop-pause-on-fail" style="width:13px;height:13px;" ${ls?.pauseOnFailure ? 'checked' : ''} onchange="loopState && (loopState.pauseOnFailure = this.checked)">
+              pause on step failure (allow retry)
+            </label>
+          </div>
         ` : `
           <div style="display:flex;flex-direction:column;gap:8px;flex:1">
             <textarea id="loop-prompt-input" placeholder="Describe the feature you want built…" rows="3"
@@ -3751,9 +3831,16 @@ function renderOrchestratorPanel() {
         <span class="loop-meta">${ls ? `${ls.steps.length} steps · ${ls.iteration} iteration(s)` : (ghToken ? 'Enter a GitHub issue number' : 'Describe what to build')}</span>
       ` : `
         ${isPaused ? `
-          <button class="loop-btn primary" onclick="resumeLoop()">↳ Resume</button>
-          <button class="loop-btn danger" onclick="abortLoop()">✕ Abort</button>
-          <span class="loop-meta" style="color:var(--accent-review)">${ls._ciPauseStep ? 'Paused — fix CI in GitHub then Resume to re-check' : 'Paused — waiting for approval'}</span>
+          ${ls._failedStep ? `
+            <button class="loop-btn retry" onclick="retryStep()">↺ Retry step</button>
+            <button class="loop-btn skip"  onclick="skipStep()">→ Skip step</button>
+            <button class="loop-btn danger" onclick="abortLoop()">✕ Abort</button>
+            <span class="loop-meta" style="color:var(--accent-review)">Step failed — retry or skip to continue</span>
+          ` : `
+            <button class="loop-btn primary" onclick="resumeLoop()">↳ Resume</button>
+            <button class="loop-btn danger" onclick="abortLoop()">✕ Abort</button>
+            <span class="loop-meta" style="color:var(--accent-review)">${ls._ciPauseStep ? 'Paused — fix CI in GitHub then Resume to re-check' : 'Paused — waiting for approval'}</span>
+          `}
         ` : `
           <button class="loop-btn danger" onclick="abortLoop()">✕ Abort loop</button>
           <span class="loop-meta" style="color:var(--accent-orch);animation:pulse 1.5s infinite">⟳ Running · iteration ${ls.iteration}/${ls.maxIterations}</span>
@@ -3832,18 +3919,20 @@ async function startLoop() {
     const input = document.getElementById('loop-issue-input');
     const num = parseInt(input?.value || '', 10);
     if (!num || num < 1) { input?.focus(); return; }
-    loopState = { issueNumber: num, status: 'running', steps: [], iteration: 1, maxIterations: 3, paused: false, aborted: false, humanGate, prNumber: null, noGitHub: false };
+    const pauseOnFailure = document.getElementById('loop-pause-on-fail')?.checked || false;
+    loopState = { issueNumber: num, status: 'running', steps: [], iteration: 1, maxIterations: 3, paused: false, aborted: false, humanGate, pauseOnFailure, prNumber: null, noGitHub: false };
   } else {
     // No-GitHub mode: start from a free-text prompt
     const textarea = document.getElementById('loop-prompt-input');
     const prompt = textarea?.value?.trim();
     if (!prompt) { textarea?.focus(); return; }
     // Synthesise a minimal issue-like object that runAgentLoop can use
+    const pauseOnFailure = document.getElementById('loop-pause-on-fail')?.checked || false;
     loopState = {
       issueNumber: null,
       promptText: prompt,
       status: 'running', steps: [], iteration: 1, maxIterations: 3,
-      paused: false, aborted: false, humanGate, prNumber: null, noGitHub: true
+      paused: false, aborted: false, humanGate, pauseOnFailure, prNumber: null, noGitHub: true
     };
   }
 
@@ -3871,6 +3960,40 @@ function waitForResume() {
 }
 function continueLoopAfterPause() {
   if (_resolveLoopPause) { _resolveLoopPause(); _resolveLoopPause = null; }
+}
+
+// Called when a step fails and pauseOnFailure is enabled.
+// Pauses the loop, shows Retry/Skip buttons, returns true if user wants to retry.
+async function pauseAndAskRetry(step) {
+  if (!loopState || !loopState.pauseOnFailure) return false;
+  loopState.status = 'paused';
+  loopState._failedStep = step;
+  loopState._retryRequested = false;
+  saveLoopState();
+  renderOrchestratorPanel();
+  await waitForResume();
+  if (loopState?.aborted) return false;
+  const retry = loopState?._retryRequested || false;
+  loopState._failedStep = null;
+  loopState._retryRequested = false;
+  loopState.status = 'running';
+  if (retry && step) {
+    // Reset the step to running so the timeline shows it re-attempting
+    updateStep(step, { status: 'running', detail: 'Retrying…', error: undefined });
+  }
+  return retry;
+}
+
+function retryStep() {
+  if (!loopState) return;
+  loopState._retryRequested = true;
+  resumeLoop();
+}
+
+function skipStep() {
+  if (!loopState) return;
+  loopState._retryRequested = false;
+  resumeLoop();
 }
 
 
@@ -4059,18 +4182,61 @@ async function waitForCI(prNumber, branchRef, statusStep, timeoutMs = 600000) {
 async function fetchCIFailureLogs(failedRuns) {
   const [owner, repo] = ghRepo.split('/');
   const logs = [];
-  for (const run of failedRuns.slice(0, 3)) { // cap at 3 jobs to avoid huge prompts
+
+  for (const checkRun of failedRuns.slice(0, 3)) {
     try {
-      // Get the job steps for this check run
-      const jobs = await ghRest(`/repos/${owner}/${repo}/actions/runs/${run.id}/jobs`);
-      for (const job of (jobs.jobs || []).filter(j => j.conclusion === 'failure').slice(0, 2)) {
+      // A check run ID ≠ a workflow run ID.
+      // The check run object has a `details_url` like:
+      //   https://github.com/{owner}/{repo}/actions/runs/{runId}/job/{jobId}
+      // Extract the workflow run ID from that URL, then fetch its jobs.
+      let workflowRunId = null;
+      const detailsUrl = checkRun.details_url || '';
+      const urlMatch = detailsUrl.match(/\/actions\/runs\/(\d+)/);
+      if (urlMatch) {
+        workflowRunId = urlMatch[1];
+      } else {
+        // Fallback: search recent workflow runs for one that matches this check run's name
+        try {
+          const runs = await ghRest(`/repos/${owner}/${repo}/actions/runs?per_page=10`);
+          const match = (runs.workflow_runs || []).find(r =>
+            r.name === checkRun.name || r.head_sha === checkRun.head_sha
+          );
+          if (match) workflowRunId = match.id;
+        } catch(e2) { /* ignore */ }
+      }
+
+      if (!workflowRunId) {
+        // Last resort: use the check run's details directly without job-level logs
+        logs.push(`### ${checkRun.name}\nStatus: ${checkRun.conclusion}\nNo workflow run ID found — check GitHub Actions for details.`);
+        continue;
+      }
+
+      const jobsData = await ghRest(`/repos/${owner}/${repo}/actions/runs/${workflowRunId}/jobs`);
+      const failedJobs = (jobsData.jobs || []).filter(j => j.conclusion === 'failure').slice(0, 3);
+
+      if (failedJobs.length === 0) {
+        logs.push(`### ${checkRun.name}\nWorkflow run #${workflowRunId}: no failed jobs found (may still be running).`);
+        continue;
+      }
+
+      for (const job of failedJobs) {
         const failedSteps = (job.steps || []).filter(s => s.conclusion === 'failure');
-        const stepNames = failedSteps.map(s => s.name).join(', ');
-        logs.push(`### Job: ${job.name}\nFailed steps: ${stepNames}\nConclusion: ${job.conclusion}`);
+        const stepDetails = failedSteps.map(s => `  - ${s.name}`).join('\n');
+        logs.push(
+          `### Job: ${job.name}\n` +
+          `Conclusion: ${job.conclusion}\n` +
+          `Failed steps:\n${stepDetails || '  (no step details available)'}\n` +
+          `Logs: ${job.html_url}`
+        );
       }
     } catch(e) {
-      logs.push(`### ${run.name}\nCould not fetch logs: ${e.message}`);
+      // Still useful — at least tell the agent the check name and error type
+      logs.push(`### ${checkRun.name}\nConclusion: ${checkRun.conclusion}\nLog fetch error: ${e.message}`);
     }
+  }
+
+  if (logs.length === 0) {
+    return 'No CI failure details could be retrieved. Check GitHub Actions directly.';
   }
   return logs.join('\n\n');
 }
@@ -4227,13 +4393,15 @@ async function runTasksFromCheckpoint() {
 
         for (const f of fileChanges.files) {
           updateStep(taskStep, { status: 'running', detail: `Writing ${f.path}…` });
+          // Always fetch current SHA from the branch — agent may output 'create' for a
+          // file that already exists from a prior task, causing a SHA mismatch if we skip lookup
+          const ex = await fetchFileContent(f.path, branchName);
           if (f.operation === 'delete') {
-            const ex = await fetchFileContent(f.path, branchName);
             if (ex) await deleteFile(f.path, `Remove ${f.path}\n\nPart of #${issue.number}`, branchName, ex.sha);
           } else {
-            const ex = await fetchFileContent(f.path, branchName);
+            const verb = ex ? 'Update' : 'Add';
             await upsertFile(f.path, f.content,
-              `${f.operation === 'create' ? 'Add' : 'Update'} ${f.path}\n\nPart of #${issue.number}`,
+              `${verb} ${f.path}\n\nPart of #${issue.number}`,
               branchName, ex?.sha || null);
           }
         }
@@ -4284,7 +4452,14 @@ async function continueLoopFromPR(issue, branchName) {
     updateStep(s5, { status: 'done', prUrl: pr.html_url, prNumber: pr.number, prTitle: pr.title });
   } catch(e) {
     updateStep(s5, { status: 'failed', error: e.message });
-    ls.status = 'error'; renderOrchestratorPanel(); return;
+    if (!(await pauseAndAskRetry(s5))) { ls.status = 'error'; renderOrchestratorPanel(); return; }
+    // Retry: re-attempt PR creation
+    try {
+      const db2 = await getDefaultBranch();
+      pr = await createPR(`[Auto] ${issue.title}`, `Automated by Agent Studio.\n\n${issue.body||''}`, branchName, db2, issue.number);
+      ls.prNumber = pr.number;
+      updateStep(s5, { status: 'done', prUrl: pr.html_url, prNumber: pr.number, prTitle: pr.title });
+    } catch(e2) { updateStep(s5, {status:'failed', error:e2.message}); ls.status='error'; renderOrchestratorPanel(); return; }
   }
   if (ls.aborted) return;
 
@@ -4331,12 +4506,34 @@ async function continueLoopFromPR(issue, branchName) {
           fileContents.push(`### ${f.filename}\n\`\`\`\n${atob(fd.content.replace(/\n/g,''))}\n\`\`\``);
         } catch(e) {}
       }
-      const ciFixPrompt = `Fix CI failures in PR #${pr.number}.\n\n## Failed checks\n${failureLogs}\n\n## Files\n${fileContents.join('\n\n')}\n\nOutput a file_changes block.`;
+      // Option 4: trim file contents to 150 lines each to save output budget
+      const trimmedContents = fileContents.map(fc => {
+        const lines = fc.split('\n');
+        return lines.length > 150
+          ? lines.slice(0, 150).join('\n') + `\n… (${lines.length - 150} more lines omitted)`
+          : fc;
+      });
+
+      // Fix one file at a time if multiple files failed
+      const failedFileNames = (ciResult.failedRuns || [])
+        .flatMap(r => (r.name || '').split(/[,/]/))
+        .map(s => s.trim()).filter(Boolean);
+
+      // Prioritise files mentioned in the failure logs
+      const relevantContents = trimmedContents.filter(fc =>
+        failedFileNames.length === 0 || failedFileNames.some(n => fc.includes(n))
+      );
+      const contentsToSend = (relevantContents.length > 0 ? relevantContents : trimmedContents).slice(0, 8);
+
+      const ciFixPrompt = `Fix CI failures in PR #${pr.number}.\n\n` +
+        `## Failed checks\n${failureLogs}\n\n` +
+        `## Relevant files (${contentsToSend.length} of ${fileContents.length})\n${contentsToSend.join('\n\n')}\n\n` +
+        `Fix ONLY the files causing CI failures. Output a file_changes block with one file at a time if needed.`;
       devLog('coding', 'prompt', ciFixPrompt);
       const fixData = await claudeFetch(
         { model: 'claude-sonnet-4-20250514', max_tokens: 16000,
           system: getAgentSystem('coding') + FILE_CHANGES_PROMPT_EXTENSION,
-          messages: [{ role: 'user', content: ciFixPrompt }] },
+          messages: [{ role: 'user', content: ciFixPrompt }], _devAgent: 'coding' },
         { onRetry: msg => updateStep(sCiFix, { status: 'running', detail: msg }) }
       );
       const fixReply = (fixData.content || [])[0]?.text || '';
@@ -4383,6 +4580,7 @@ async function continueLoopFromPR(issue, branchName) {
       if (verdict === 'APPROVE') { approved = true; break; }
     } catch(e) {
       updateStep(sReview, { status: 'failed', error: e.message });
+      if (await pauseAndAskRetry(sReview)) continue; // retry this review iteration
       ls.status = 'error'; renderOrchestratorPanel(); return;
     }
     if (ls.aborted) return;
@@ -4457,7 +4655,16 @@ async function continueLoopFromPR(issue, branchName) {
       ls.status = 'done';
     } catch(e) {
       updateStep(sMerge, { status: 'failed', error: e.message });
-      ls.status = 'error';
+      if (await pauseAndAskRetry(sMerge)) {
+        try {
+          const [om,rm] = ghRepo.split('/');
+          await ghRest(`/repos/${om}/${rm}/pulls/${pr.number}/merge`,'PUT',{commit_title:`Merge PR #${pr.number}: ${pr.title}`,commit_message:'Auto-merged.',merge_method:'squash'});
+          updateStep(sMerge,{status:'done',detail:'Merged',prUrl:pr.html_url,prNumber:pr.number,prTitle:pr.title});
+          ls.status='done';
+        } catch(e2){updateStep(sMerge,{status:'failed',error:e2.message});ls.status='error';}
+      } else {
+        ls.status = 'error';
+      }
     }
   }
   renderOrchestratorPanel();
@@ -4615,29 +4822,98 @@ async function runAgentLoop() {
     let allResults = [];
 
     for (const task of breakdown.tasks) {
-      if (task.agent === 'review') continue; // review comes after
+      if (task.agent === 'review') continue;
       if (ls.aborted) return;
 
       const taskStep = addLoopStep(task.agent, task.title, 'running');
       try {
-        // Fetch current branch file contents if branch exists
-        let contextNote = '';
-        if (createdBranch) {
-          contextNote = `\n\nThis is part of branch ${branchName} — make sure your code is consistent with files already committed there.`;
+        // Trim system prompt: strip repo context cache to save output budget
+        // The architecture spec and FILE_CHANGES extension are all that's needed
+        const agentSystem = getAgentSystem(task.agent) + FILE_CHANGES_PROMPT_EXTENSION;
+        const issueRef = issue.number ? `GitHub Issue #${issue.number}: ${issue.title}` : `Feature: ${issue.title}`;
+        const branchNote = createdBranch
+          ? `\n\nBranch: ${branchName} — keep consistent with already-committed files.` : '';
+
+        // Declare fileChanges here so both if/else branches can assign it
+        let fileChanges = null;
+
+        // Find the lead dev subtasks for this task so we can write one file at a time
+        const taskLeadBreakdown = leadBreakdowns.find(lb => lb.sourceTaskId === task.id);
+        const filesToWrite = taskLeadBreakdown?.subtasks
+          ?.filter(s => s.type === 'file' || s.type === 'config' || s.type === 'ui' || s.type === 'api')
+          ?.map(s => {
+            // Extract a file path from the detail field (look for lib/... or *.yaml etc.)
+            const pathMatch = s.detail?.match(/\b(lib\/[^\s,]+|pubspec\.yaml|analysis_options\.yaml|src\/[^\s,]+|app\/[^\s,]+|pages?\/[^\s,]+|components?\/[^\s,]+|[a-z_]+\.[a-z]+)/);
+            return pathMatch ? { path: pathMatch[1], title: s.title, detail: s.detail } : null;
+          })
+          ?.filter(Boolean) || [];
+
+        // If we have specific file paths, write one at a time; otherwise write all at once
+        if (filesToWrite.length > 0) {
+          updateStep(taskStep, { status: 'running', detail: `Writing ${filesToWrite.length} file(s) one at a time…` });
+
+          const taskFileChanges = { branch_suffix: task.id, pr_title: task.title, pr_body: task.description, files: [] };
+
+          for (const fileSpec of filesToWrite) {
+            if (ls.aborted) return;
+            updateStep(taskStep, { status: 'running', detail: `Writing ${fileSpec.path}…` });
+
+            const filePrompt = `You are implementing part of: ${issueRef}${branchNote}\n\n` +
+              `## Task\n${task.title}\n\n` +
+              `## Write exactly ONE file: ${fileSpec.path}\n${fileSpec.detail}\n\n` +
+              `Output a file_changes block containing ONLY this single file. No other files.`;
+
+            const data = await claudeFetch(
+              { model: 'claude-sonnet-4-20250514', max_tokens: 16000, system: agentSystem,
+                messages: [{ role: 'user', content: filePrompt }], _devAgent: task.agent },
+              { onRetry: msg => updateStep(taskStep, { status: 'running', detail: msg }) }
+            );
+            const reply = (data.content || [])[0]?.text || '';
+            const fc = tryParseFileChanges(reply);
+            if (fc?.files?.length) {
+              taskFileChanges.files.push(...fc.files);
+            } else {
+              // Fallback: ask for just raw file content without file_changes wrapper
+              updateStep(taskStep, { status: 'running', detail: `Retrying ${fileSpec.path} with simplified prompt…` });
+              const simplePrompt = `Write the complete contents of ${fileSpec.path} for: ${issueRef}\n\n${fileSpec.detail}\n\nOutput a file_changes block with just this one file.`;
+              const retryData = await claudeFetch(
+                { model: 'claude-sonnet-4-20250514', max_tokens: 16000, system: agentSystem,
+                  messages: [{ role: 'user', content: simplePrompt }], _devAgent: task.agent },
+                { onRetry: msg => updateStep(taskStep, { status: 'running', detail: msg }) }
+              );
+              const retryFc = tryParseFileChanges((retryData.content || [])[0]?.text || '');
+              if (retryFc?.files?.length) taskFileChanges.files.push(...retryFc.files);
+            }
+          }
+
+          if (!taskFileChanges.files.length) {
+            updateStep(taskStep, { status: 'paused', detail: 'No files produced after per-file attempts — skipping' });
+            continue;
+          }
+
+          accumulateFileChanges(task.agent, taskFileChanges);
+          fileChanges = taskFileChanges;
+
+        } else {
+          // No subtask breakdown — fall back to one call for all files
+          // (still trimmed: no repo context in system prompt)
+          const taskPrompt = `You are implementing part of: ${issueRef}${branchNote}\n\n` +
+            `## Your task\n${task.title}\n\n${task.description}\n\n` +
+            `Implement this now. Output a file_changes block. Write files one at a time if needed.`;
+
+          const data = await claudeFetch(
+            { model: 'claude-sonnet-4-20250514', max_tokens: 16000, system: agentSystem,
+              messages: [{ role: 'user', content: taskPrompt }], _devAgent: task.agent },
+            { onRetry: msg => updateStep(taskStep, { status: 'running', detail: msg }) }
+          );
+          const reply = (data.content || [])[0]?.text || '';
+          fileChanges = tryParseFileChanges(reply);
+          if (fileChanges) accumulateFileChanges(task.agent, fileChanges);
+          if (!fileChanges || !fileChanges.files?.length) {
+            updateStep(taskStep, { status: 'paused', detail: 'No file changes produced — skipping' });
+            continue;
+          }
         }
-
-        const agentSystem = getAgentSystem(task.agent) + FILE_CHANGES_PROMPT_EXTENSION + (repoContextCache ? '\n\n' + repoContextCache : '');
-        const taskPrompt = `You are implementing part of GitHub Issue #${issue.number}: ${issue.title}\n\n` +
-          `## Your task\n${task.title}\n\n${task.description}${contextNote}\n\n` +
-          `Implement this now. Output a file_changes block with complete file contents.`;
-
-        const data = await claudeFetch({ model: 'claude-sonnet-4-20250514', max_tokens: 16000, system: agentSystem, messages: [{ role: 'user', content: taskPrompt }] });
-        if (data.error) throw new Error(data.error.message);
-        const reply = data.content?.[0]?.text || '';
-
-        const fileChanges = tryParseFileChanges(reply);
-        if (fileChanges) accumulateFileChanges(task.agent, fileChanges);
-        if (!fileChanges) { updateStep(taskStep, { status: 'done', detail: 'No file changes needed' }); continue; }
 
         // Commit to the shared branch
         if (!createdBranch) {
@@ -4650,12 +4926,13 @@ async function runAgentLoop() {
 
         for (const f of fileChanges.files) {
           updateStep(taskStep, { status: 'running', detail: `Writing ${f.path}…` });
+          const existing = await fetchFileContent(f.path, branchName);
           if (f.operation === 'delete') {
-            const existing = await fetchFileContent(f.path, branchName);
             if (existing) await deleteFile(f.path, `Remove ${f.path}\n\nPart of #${issue.number}`, branchName, existing.sha);
           } else {
-            const existing = await fetchFileContent(f.path, branchName);
-            await upsertFile(f.path, f.content, `${f.operation === 'create' ? 'Add' : 'Update'} ${f.path}\n\nPart of #${issue.number}`, branchName, existing?.sha || null);
+            await upsertFile(f.path, f.content,
+              `${existing ? 'Update' : 'Add'} ${f.path}\n\nPart of #${issue.number}`,
+              branchName, existing?.sha || null);
           }
           allResults.push({ path: f.path, operation: f.operation });
         }
@@ -4811,7 +5088,7 @@ async function runAgentLoop() {
           `Fix the build/test failures. Focus on: compile errors, missing imports, failing tests, pubspec issues.\n` +
           `Output a file_changes block. Use branch_suffix: ci-fix-${ciAttempt + 1}`;
 
-        const fixData = await claudeFetch({ model: 'claude-sonnet-4-20250514', max_tokens: 16000, system: fixSystem, messages: [{ role: 'user', content: fixPrompt }] });
+        const fixData = await claudeFetch({ model: 'claude-sonnet-4-20250514', max_tokens: 16000, system: fixSystem, messages: [{ role: 'user', content: fixPrompt }], _devAgent: 'coding' });
         const fixReply = fixData.content?.[0]?.text || '';
         const fixChanges = tryParseFileChanges(fixReply);
 
@@ -4848,7 +5125,7 @@ async function runAgentLoop() {
         const reviewPrompt = `Review PR #${pr.number}: ${pr.title}\n\nBranch: ${pr.head.ref}\n\n${pr.body || ''}\n\n## Diffs\n\n${diffs}`;
         const reviewSystem = getAgentSystem('review') + (repoContextCache ? '\n\n' + repoContextCache : '');
 
-        const reviewData = await claudeFetch({ model: 'claude-sonnet-4-20250514', max_tokens: 4000, system: reviewSystem, messages: [{ role: 'user', content: reviewPrompt }] });
+        const reviewData = await claudeFetch({ model: 'claude-sonnet-4-20250514', max_tokens: 4000, system: reviewSystem, messages: [{ role: 'user', content: reviewPrompt }], _devAgent: 'review' });
         reviewText = reviewData.content?.[0]?.text || '';
 
         const vMatch = reviewText.match(/VERDICT:\s*(APPROVE|REQUEST_CHANGES|COMMENT)/i);
@@ -4897,7 +5174,7 @@ async function runAgentLoop() {
         const fixSystem = getAgentSystem('coding') + FILE_CHANGES_PROMPT_EXTENSION;
         const fixPrompt = `Fix ALL issues in this code review for PR #${pr.number}.\n\n## Review findings\n${strippedReview}\n\n## Current files\n${fileContents.join('\n\n')}\n\nOutput a file_changes block. Use branch_suffix: fix-iter${ls.iteration}`;
 
-        const fixData = await claudeFetch({ model: 'claude-sonnet-4-20250514', max_tokens: 16000, system: fixSystem, messages: [{ role: 'user', content: fixPrompt }] });
+        const fixData = await claudeFetch({ model: 'claude-sonnet-4-20250514', max_tokens: 16000, system: fixSystem, messages: [{ role: 'user', content: fixPrompt }], _devAgent: 'coding' });
         const fixReply = fixData.content?.[0]?.text || '';
         const fixChanges = tryParseFileChanges(fixReply);
 
@@ -4962,6 +5239,18 @@ async function runAgentLoop() {
 // ── Changelog ─────────────────────────────────────────────────────────────────
 
 const CHANGELOG = [
+  {
+    version: '1.13.0', label: 'Pause on failure + retry', date: 'Mar 2026',
+    items: [
+      'New "pause on step failure" checkbox — stops the loop on any failure instead of aborting',
+      'Retry/Skip/Abort buttons appear when a step fails in pause mode',
+      'Retry re-executes the failed step: task coding, PR creation, review, or merge',
+      'Skip continues to the next step; Abort ends the loop',
+      'Paused failure state persisted to localStorage — survives page refresh',
+      'Loop state now saved to localStorage on every step change — auto loop survives refresh',
+      'clearChat on orchestrator removes saved loop state from localStorage',
+    ]
+  },
   {
     version: '1.12.0', label: 'Resume from checkpoint + dev log', date: 'Mar 2026',
     items: [
@@ -5467,7 +5756,8 @@ async function sendToCoderWithPRFix(prNumber, reviewText, pr, files) {
         model: 'claude-sonnet-4-20250514',
         max_tokens: 16000,
         system,
-        messages: [{ role: 'user', content: prompt }]
+        messages: [{ role: 'user', content: prompt }],
+        _devAgent: 'coding'
       });
     if (data.error) {
       conversations['coding'].push({ role: 'assistant', content: 'API error: ' + data.error.message });
@@ -5649,7 +5939,13 @@ function autoResize(el) {
 function clearChat() {
   conversations[currentAgent] = [];
   saveConversations();
-  renderMessages();
+  if (currentAgent === 'orchestrator') {
+    loopState = null;
+    saveLoopState();
+    renderOrchestratorPanel();
+  } else {
+    renderMessages();
+  }
 }
 
 function clearAllChats() {
@@ -5712,7 +6008,7 @@ async function sendMessage() {
     // PR fix needs max headroom — full file contents + complete fixed files in response
     const maxTokens = isPRFix ? 16000 : (agent === 'requirements' || agent === 'lead' || systemOverride) ? 8000 : 1000;
 
-    const data = await claudeFetch({ model: 'claude-sonnet-4-20250514', max_tokens: maxTokens, system, messages });
+    const data = await claudeFetch({ model: 'claude-sonnet-4-20250514', max_tokens: maxTokens, system, messages, _devAgent: agent });
     if (data.error) {
       conversations[agent].push({ role: 'assistant', content: 'API error: ' + data.error.message });
     } else {
