@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local LLM Hardware Comparison</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0D0F12;
+    --surface:   #131619;
+    --cell-bg:   #0F1215;
+    --border:    #1E2228;
+    --border-hi: #2A2F38;
+    --text:      #C8CDD6;
+    --text-dim:  #505868;
+    --text-muted:#888FA0;
+    --apple:     #7EB8F7;
+    --apple-dim: #2A3A50;
+    --amd64:     #E8490F;
+    --amd64-dim: #3A1A08;
+    --amd128:    #F5A623;
+    --amd128-dim:#3A2808;
+    --green:     #3DBA6F;
+    --yellow:    #E8C84A;
+    --red:       #E8584A;
+  }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* ── Header ── */
+  header {
+    padding: 36px 40px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
+    color: #fff;
+    margin-bottom: 6px;
+  }
+  header p {
+    font-size: 13px;
+    color: var(--text-muted);
+    max-width: 600px;
+  }
+
+  /* ── Controls ── */
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 18px 40px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .controls label { font-size: 12px; color: var(--text-muted); }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 18px;
+    border-radius: 6px;
+    border: 1px solid var(--border-hi);
+    background: var(--surface);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    user-select: none;
+  }
+  .btn:hover { background: #1C2028; border-color: #3A4050; }
+  .btn.primary { background: #1A2A40; border-color: var(--apple); color: var(--apple); }
+  .btn.primary:hover { background: #1E3050; }
+  .spacer { flex: 1; }
+  .legend {
+    display: flex;
+    gap: 20px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .legend-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* ── Speed slider ── */
+  .speed-control {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 4px;
+  }
+  .speed-control label {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .speed-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--apple);
+    min-width: 28px;
+    text-align: right;
+  }
+  input[type=range].speed-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border-hi);
+    outline: none;
+    cursor: pointer;
+  }
+  input[type=range].speed-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--apple);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  input[type=range].speed-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border: none;
+    border-radius: 50%;
+    background: var(--apple);
+    cursor: pointer;
+  }
+  input[type=range].speed-slider:hover::-webkit-slider-thumb { background: #A8D0FF; }
+  .divider { width: 1px; height: 20px; background: var(--border-hi); }
+
+  /* ── Main grid ── */
+  .grid-wrap {
+    padding: 24px 40px 40px;
+    display: grid;
+    grid-template-columns: 130px 1fr 1fr 1fr;
+    gap: 0;
+    min-width: 900px;
+  }
+
+  /* Column headers */
+  .col-header {
+    padding: 16px 20px 14px;
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+  }
+  .col-header:last-child { border-right: none; }
+  .col-header.empty { background: transparent; border-bottom: 1px solid var(--border); }
+  .chip-name {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 3px;
+  }
+  .chip-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .chip-price {
+    font-size: 11px;
+    margin-top: 5px;
+    opacity: 0.7;
+  }
+  .apple-col .chip-name  { color: var(--apple); }
+  .amd64-col .chip-name  { color: var(--amd64); }
+  .amd128-col .chip-name { color: var(--amd128); }
+
+  /* Row label cells */
+  .row-label {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0 16px 0 0;
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+  }
+  .row-label:last-of-type { border-bottom: none; }
+  .row-label-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .row-label-desc {
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+  .row-label-tok {
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 6px;
+    font-style: italic;
+  }
+
+  /* Scenario cells */
+  .scenario {
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    padding: 16px 18px;
+    min-height: 190px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+  }
+  .scenario:last-child { border-right: none; }
+  .scenario.no-bottom { border-bottom: none; }
+  .scenario-inner { flex: 1; display: flex; flex-direction: column; }
+
+  /* Stream output */
+  .stream-output {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    line-height: 1.65;
+    color: #9AAABB;
+    flex: 1;
+    overflow: hidden;
+    word-break: break-word;
+    position: relative;
+    min-height: 110px;
+  }
+  .cursor {
+    display: inline-block;
+    width: 7px; height: 13px;
+    background: var(--text-muted);
+    vertical-align: middle;
+    animation: blink 0.9s step-end infinite;
+    margin-left: 1px;
+    opacity: 0;
+  }
+  .cursor.active { opacity: 1; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+  /* Status bar */
+  .status-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 10px;
+    padding-top: 9px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    gap: 8px;
+    min-height: 28px;
+  }
+  .status-label {
+    color: var(--text-dim);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .status-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .tok-counter {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .badge {
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+  }
+  .badge.waiting  { background: #1A1D22; color: var(--text-dim); }
+  .badge.running  { background: #1A2A1E; color: var(--green); }
+  .badge.done     { background: #1A2218; color: var(--green); }
+
+  /* Speed indicator */
+  .speed-pill {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 3px;
+  }
+  .speed-green  { background: #0E2018; color: #5DDA8F; }
+  .speed-yellow { background: #1E1A0A; color: #E8C84A; }
+  .speed-red    { background: #1E0E0A; color: #E8584A; }
+
+  /* Progress bar */
+  .progress-track {
+    height: 2px;
+    background: var(--border);
+    border-radius: 1px;
+    margin-top: 8px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    border-radius: 1px;
+    width: 0%;
+    transition: width 0.1s linear;
+  }
+  .apple-fill  { background: var(--apple); }
+  .amd64-fill  { background: var(--amd64); }
+  .amd128-fill { background: var(--amd128); }
+
+  /* Time display */
+  .time-display {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .time-display.done-time { color: #5DDA8F; }
+
+  /* Completion overlay flash */
+  .scenario.completed::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    animation: flash 0.4s ease forwards;
+  }
+  @keyframes flash {
+    0%   { background: rgba(255,255,255,0.04); }
+    100% { background: transparent; }
+  }
+
+  /* Footer note */
+  footer {
+    padding: 20px 40px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-dim);
+    display: flex;
+    gap: 32px;
+    flex-wrap: wrap;
+  }
+  footer span { display: flex; align-items: center; gap: 6px; }
+
+  /* Row divider label */
+  .row-section-label {
+    grid-column: 1 / -1;
+    padding: 10px 0 6px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+
+  @media (max-width: 900px) {
+    .grid-wrap { padding: 16px; min-width: unset; overflow-x: auto; }
+    header, .controls, footer { padding: 20px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Local LLM Hardware Comparison</h1>
+  <p>Simulating real token generation speeds across 3 hardware platforms and 3 developer use cases. Speed is proportional to measured benchmarks — watch which completes first.</p>
+</header>
+
+<div class="controls">
+  <button class="btn primary" id="runBtn" onclick="runAll()">▶ Run All Scenarios</button>
+  <button class="btn" onclick="resetAll()">↺ Reset</button>
+  <div class="divider"></div>
+  <div class="speed-control">
+    <label for="speedSlider">Speed</label>
+    <input type="range" id="speedSlider" class="speed-slider" min="0" max="3" step="1" value="3" oninput="onSpeedChange(this.value)">
+    <span class="speed-value" id="speedLabel">8×</span>
+  </div>
+  <div class="spacer"></div>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--apple)"></div>Apple M5 Pro</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--amd64)"></div>ASUS ROG Flow Z13</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--amd128)"></div>MS-S1 Max 128GB</div>
+  </div>
+</div>
+
+<div class="grid-wrap" id="grid">
+  <!-- Column headers -->
+  <div class="col-header empty"></div>
+
+  <div class="col-header apple-col">
+    <div class="chip-name">Apple M5 Pro</div>
+    <div class="chip-sub">64GB Unified Memory</div>
+    <div class="chip-price" style="color:var(--apple)">~$3,299 MacBook Pro 16"</div>
+  </div>
+  <div class="col-header amd64-col">
+    <div class="chip-name">ASUS ROG Flow Z13</div>
+    <div class="chip-sub">Ryzen AI Max+ 395 · 128GB</div>
+    <div class="chip-price" style="color:var(--amd64)">~$2,849 gaming laptop</div>
+  </div>
+  <div class="col-header amd128-col">
+    <div class="chip-name">MS-S1 Max 128GB</div>
+    <div class="chip-sub">Ryzen AI Max+ 395</div>
+    <div class="chip-price" style="color:var(--amd128)">~$3,199 mini PC</div>
+  </div>
+
+  <!-- Row: Autocomplete -->
+  <div class="row-label">
+    <div class="row-label-name">Auto-<br>complete</div>
+    <div class="row-label-desc">Inline, real-time</div>
+    <div class="row-label-tok">Need ≥50 t/s</div>
+  </div>
+  <div class="scenario apple-col" id="s-autocomplete-apple">
+    <div class="scenario-inner">
+      <div class="stream-output" id="out-autocomplete-apple"></div>
+      <div class="progress-track"><div class="progress-fill apple-fill" id="prog-autocomplete-apple"></div></div>
+      <div class="status-bar">
+        <span class="status-label">qwen2.5-coder:1.5b</span>
+        <span class="status-right">
+          <span class="time-display" id="time-autocomplete-apple">—</span>
+          <span class="tok-counter" id="tokc-autocomplete-apple"></span>
+          <span class="badge waiting" id="badge-autocomplete-apple">Waiting</span>
+        </span>
+      </div>
+    </div>
+  </div>
+  <div class="scenario amd64-col" id="s-autocomplete-amd64">
+    <div class="scenario-inner">
+      <div class="stream-output" id="out-autocomplete-amd64"></div>
+      <div class="progress-track"><div class="progress-fill amd64-fill" id="prog-autocomplete-amd64"></div></div>
+      <div class="status-bar">
+        <span class="status-label">qwen2.5-coder:1.5b</span>
+        <span class="status-right">
+          <span class="time-display" id="time-autocomplete-amd64">—</span>
+          <span class="tok-counter" id="tokc-autocomplete-amd64"></span>
+          <span class="badge waiting" id="badge-autocomplete-amd64">Waiting</span>
+        </span>
+      </div>
+    </div>
+  </div>
+  <div class="scenario amd128-col" id="s-autocomplete-amd128">
+    <div class="scenario-inner">
+      <div class="stream-output" id="out-autocomplete-amd128"></div>
+      <div class="progress-track"><div class="progress-fill amd128-fill" id="prog-autocomplete-amd128"></div></div>
+      <div class="status-bar">
+        <span class="status-label">qwen2.5-coder:1.5b</span>
+        <span class="status-right">
+          <span class="time-display" id="time-autocomplete-amd128">—</span>
+          <span class="tok-counter" id="tokc-autocomplete-amd128"></span>
+          <span class="badge waiting" id="badge-autocomplete-amd128">Waiting</span>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row: Chat -->
+  <div class="row-label">
+    <div class="row-label-name">Chat</div>
+    <div class="row-label-desc">On-demand Q&A</div>
+    <div class="row-label-tok">Need ≥15 t/s</div>
+  </div>
+  <div class="scenario apple-col" id="s-chat-apple">
+    <div class="scenario-inner">
+      <div class="stream-output" id="out-chat-apple"></div>
+      <div class="progress-track"><div class="progress-fill apple-fill" id="prog-chat-apple"></div></div>
+      <div class="status-bar">
+        <span class="status-label">qwen3-coder:30b</span>
+        <span class="status-right">
+          <span class="time-display" id="time-chat-apple">—</span>
+          <span class="tok-counter" id="tokc-chat-apple"></span>
+          <span class="badge waiting" id="badge-chat-apple">Waiting</span>
+        </span>
+      </div>
+    </div>
+  </div>
+  <div class="scenario amd64-col" id="s-chat-amd64">
+    <div class="scenario-inner">
+      <div class="stream-output" id="out-chat-amd64"></div>
+      <div class="progress-track"><div class="progress-fill amd64-fill" id="prog-chat-amd64"></div></div>
+      <div class="status-bar">
+        <span class="status-label">qwen3-coder:70b</span>
+        <span class="status-right">
+          <span class="time-display" id="time-chat-amd64">—</span>
+          <span class="tok-counter" id="tokc-chat-amd64"></span>
+          <span class="badge waiting" id="badge-chat-amd64">Waiting</span>
+        </span>
+      </div>
+    </div>
+  </div>
+  <div class="scenario amd128-col" id="s-chat-amd128">
+    <div class="scenario-inner">
+      <div class="stream-output" id="out-chat-amd128"></div>
+      <div class="progress-track"><div class="progress-fill amd128-fill" id="prog-chat-amd128"></div></div>
+      <div class="status-bar">
+        <span class="status-label">qwen3-coder:70b</span>
+        <span class="status-right">
+          <span class="time-display" id="time-chat-amd128">—</span>
+          <span class="tok-counter" id="tokc-chat-amd128"></span>
+          <span class="badge waiting" id="badge-chat-amd128">Waiting</span>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row: Agent -->
+  <div class="row-label" style="border-bottom:none">
+    <div class="row-label-name">Agent</div>
+    <div class="row-label-desc">Multi-step reasoning</div>
+    <div class="row-label-tok">Need ≥30 t/s</div>
+  </div>
+  <div class="scenario apple-col no-bottom" id="s-agent-apple">
+    <div class="scenario-inner">
+      <div class="stream-output" id="out-agent-apple"></div>
+      <div class="progress-track"><div class="progress-fill apple-fill" id="prog-agent-apple"></div></div>
+      <div class="status-bar">
+        <span class="status-label">qwen3-coder:30b</span>
+        <span class="status-right">
+          <span class="time-display" id="time-agent-apple">—</span>
+          <span class="tok-counter" id="tokc-agent-apple"></span>
+          <span class="badge waiting" id="badge-agent-apple">Waiting</span>
+        </span>
+      </div>
+    </div>
+  </div>
+  <div class="scenario amd64-col no-bottom" id="s-agent-amd64">
+    <div class="scenario-inner">
+      <div class="stream-output" id="out-agent-amd64"></div>
+      <div class="progress-track"><div class="progress-fill amd64-fill" id="prog-agent-amd64"></div></div>
+      <div class="status-bar">
+        <span class="status-label">qwen3-coder:70b</span>
+        <span class="status-right">
+          <span class="time-display" id="time-agent-amd64">—</span>
+          <span class="tok-counter" id="tokc-agent-amd64"></span>
+          <span class="badge waiting" id="badge-agent-amd64">Waiting</span>
+        </span>
+      </div>
+    </div>
+  </div>
+  <div class="scenario amd128-col no-bottom" id="s-agent-amd128">
+    <div class="scenario-inner">
+      <div class="stream-output" id="out-agent-amd128"></div>
+      <div class="progress-track"><div class="progress-fill amd128-fill" id="prog-agent-amd128"></div></div>
+      <div class="status-bar">
+        <span class="status-label">qwen3-coder:70b</span>
+        <span class="status-right">
+          <span class="time-display" id="time-agent-amd128">—</span>
+          <span class="tok-counter" id="tokc-agent-amd128"></span>
+          <span class="badge waiting" id="badge-agent-amd128">Waiting</span>
+        </span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>⚡ Speeds based on measured benchmarks (Ollama MLX backend, Vulkan/RADV llama.cpp)</span>
+  <span>📐 Output length standardised per use case for fair comparison</span>
+  <span id="speedNote">🔢 Simulation runs at 8× real-time to keep demo under 60 seconds</span>
+</footer>
+
+<script>
+// ── Token speeds (tok/s) per hardware per use case ──────────────────────────
+// Apple M5 Pro 64GB: autocomplete 1.5b → ~120 t/s, chat 30b → ~55 t/s, agent 30b → ~55 t/s
+// AMD 64GB: autocomplete 1.5b → ~168 t/s (Vulkan RADV), chat 30b → ~45 t/s, agent 30b → ~45 t/s
+// AMD 128GB: autocomplete 1.5b → ~168 t/s, chat 70b → ~20 t/s, agent 70b → ~20 t/s
+// Note: AMD 128GB uses 70b model for chat/agent (better quality due to more RAM)
+
+const SPEEDS = {
+  autocomplete: { apple: 120, amd64: 168, amd128: 168 },
+  chat:         { apple:  55, amd64:  20, amd128:  20 },
+  agent:        { apple:  55, amd64:  20, amd128:  20 },
+};
+
+// Target token counts per use case
+const TARGET_TOKENS = {
+  autocomplete: 28,   // typical inline completion
+  chat:         220,  // a substantive chat answer
+  agent:        320,  // multi-step reasoning chain + action
+};
+
+// Speed classes for badge colouring
+const THRESHOLDS = {
+  autocomplete: { green: 50, yellow: 25 },
+  chat:         { green: 15, yellow:  7 },
+  agent:        { green: 30, yellow: 15 },
+};
+
+// Sample text streams
+const TEXTS = {
+  autocomplete: [
+    "async function fetchUserData(userId: string): Promise<User> {\n  const response = await fetch(`/api/users/${userId}`);\n  if (!response.ok) throw new Error(`HTTP ${response.status}`);\n  return response.json() as Promise<User>;\n}"
+  ],
+  chat: [
+    "The primary difference between `useEffect` and `useLayoutEffect` is *when* they fire relative to the DOM update cycle.\n\n`useEffect` runs asynchronously after the browser has painted — it won't block visual updates, making it suitable for data fetching, subscriptions, and most side effects.\n\n`useLayoutEffect` fires synchronously after all DOM mutations but before the browser paints. This makes it the right choice when you need to read layout (e.g. element dimensions) or make DOM mutations that should appear in the same frame. Misusing it causes visual flicker.\n\nRule of thumb: start with `useEffect`. Switch to `useLayoutEffect` only if you observe a flicker or need synchronous DOM measurement."
+  ],
+  agent: [
+    "Step 1 — Analysing codebase structure...\n✓ Found 14 files matching pattern `*.service.ts`\n\nStep 2 — Identifying N+1 query patterns...\n✓ Detected in UserService.getWithPosts() at line 47\n✓ Detected in OrderService.getWithItems() at line 112\n\nStep 3 — Generating DataLoader wrappers...\n```typescript\nconst userLoader = new DataLoader<string, User>(\n  async (ids) => UserRepo.findByIds(ids),\n  { cache: true }\n);\n```\nStep 4 — Applying patches to 2 files...\n✓ UserService.ts patched\n✓ OrderService.ts patched\n\nStep 5 — Running tests...\n✓ 38 tests passed  ✗ 0 failed\n\nDone. Estimated query reduction: ~85% on list endpoints."
+  ]
+};
+
+// Simulation runs at this multiplier relative to real time
+let SPEEDUP = 8;
+
+const SPEED_STEPS = [1, 2, 4, 8];
+
+function onSpeedChange(val) {
+  SPEEDUP = SPEED_STEPS[parseInt(val)];
+  document.getElementById('speedLabel').textContent = SPEEDUP + '×';
+  // Update footer note live
+  const note = document.getElementById('speedNote');
+  if (note) note.textContent = `🔢 Simulation runs at ${SPEEDUP}× real-time`;
+}
+
+// ── State ───────────────────────────────────────────────────────────────────
+const intervals = {};
+const timers    = {};
+let   running   = false;
+
+function getSpeedClass(usecase, tps) {
+  const t = THRESHOLDS[usecase];
+  if (tps >= t.green)  return 'speed-green';
+  if (tps >= t.yellow) return 'speed-yellow';
+  return 'speed-red';
+}
+
+function getSpeedLabel(usecase, tps) {
+  const t = THRESHOLDS[usecase];
+  if (tps >= t.green)  return '✓ Sweet spot';
+  if (tps >= t.yellow) return '⚠ Minimum';
+  return '✗ Too slow';
+}
+
+function formatTime(ms) {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms/1000).toFixed(1)}s`;
+}
+
+function runScenario(usecase, hw) {
+  const id       = `${usecase}-${hw}`;
+  const tps      = SPEEDS[usecase][hw];
+  const target   = TARGET_TOKENS[usecase];
+  const text     = TEXTS[usecase][0];
+  const fillClass = `${hw}-fill`;
+
+  const outEl    = document.getElementById(`out-${id}`);
+  const progEl   = document.getElementById(`prog-${id}`);
+  const badgeEl  = document.getElementById(`badge-${id}`);
+  const timeEl   = document.getElementById(`time-${id}`);
+  const tokcEl   = document.getElementById(`tokc-${id}`);
+  const scenEl   = document.getElementById(`s-${id}`);
+
+  // Clear previous
+  outEl.innerHTML = '';
+  progEl.style.width = '0%';
+  badgeEl.className = 'badge running';
+  badgeEl.textContent = `${tps} t/s`;
+  timeEl.className = 'time-display';
+  timeEl.textContent = '0.0s';
+  tokcEl.textContent = '';
+
+  // Interval in ms between tokens (scaled by SPEEDUP)
+  const intervalMs = (1000 / tps) / SPEEDUP;
+  // Total chars in text
+  const chars      = text.length;
+  // Chars per token (approximate)
+  const charsPerTok = chars / target;
+
+  let tokensEmitted = 0;
+  let charIdx       = 0;
+  const startMs     = performance.now();
+
+  // Cursor element
+  const cursor = document.createElement('span');
+  cursor.className = 'cursor active';
+  outEl.appendChild(cursor);
+
+  timers[id] = setInterval(() => {
+    const elapsed = performance.now() - startMs;
+    timeEl.textContent = `${(elapsed / 1000 / SPEEDUP).toFixed(1)}s`;
+  }, 50);
+
+  intervals[id] = setInterval(() => {
+    if (tokensEmitted >= target || charIdx >= chars) {
+      clearInterval(intervals[id]);
+      clearInterval(timers[id]);
+      cursor.className = 'cursor';
+
+      const elapsed     = performance.now() - startMs;
+      const realSeconds = elapsed / 1000 / SPEEDUP;
+
+      timeEl.className  = 'time-display done-time';
+      timeEl.textContent = formatTime(Math.round(realSeconds * 1000));
+
+      const cls = getSpeedClass(usecase, tps);
+      const lbl = getSpeedLabel(usecase, tps);
+      badgeEl.className = 'badge done';
+      badgeEl.textContent = '✓ Done';
+
+      tokcEl.innerHTML = `<span class="speed-pill ${cls}">${lbl}</span>`;
+      progEl.style.width = '100%';
+      scenEl.classList.add('completed');
+      return;
+    }
+
+    // Emit ~charsPerTok chars this tick
+    const toEmit = Math.max(1, Math.round(charsPerTok));
+    const chunk  = text.slice(charIdx, charIdx + toEmit);
+    charIdx      += toEmit;
+    tokensEmitted++;
+
+    // Insert before cursor
+    const node = document.createTextNode(chunk);
+    outEl.insertBefore(node, cursor);
+
+    // Progress
+    const pct = (tokensEmitted / target) * 100;
+    progEl.style.width = pct + '%';
+
+    // Token counter
+    tokcEl.textContent = `${tokensEmitted}/${target}`;
+
+    // Auto-scroll
+    outEl.scrollTop = outEl.scrollHeight;
+  }, intervalMs);
+}
+
+function runAll() {
+  if (running) return;
+  running = true;
+  document.getElementById('runBtn').textContent = '▶ Running…';
+  document.getElementById('runBtn').disabled = true;
+
+  const usecases = ['autocomplete', 'chat', 'agent'];
+  const hws      = ['apple', 'amd64', 'amd128'];
+
+  usecases.forEach((uc, ri) => {
+    hws.forEach((hw, ci) => {
+      const delay = ri * 120 + ci * 30; // stagger slightly
+      setTimeout(() => runScenario(uc, hw), delay);
+    });
+  });
+
+  // Re-enable after all could be done
+  const longestMs = (() => {
+    let max = 0;
+    ['autocomplete','chat','agent'].forEach(uc => {
+      ['apple','amd64','amd128'].forEach(hw => {
+        const ms = (TARGET_TOKENS[uc] / SPEEDS[uc][hw]) * 1000 / SPEEDUP;
+        if (ms > max) max = ms;
+      });
+    });
+    return max;
+  })();
+
+  setTimeout(() => {
+    running = false;
+    document.getElementById('runBtn').textContent = '▶ Run Again';
+    document.getElementById('runBtn').disabled = false;
+  }, longestMs + 800);
+}
+
+function resetAll() {
+  // Kill all running intervals
+  Object.values(intervals).forEach(clearInterval);
+  Object.values(timers).forEach(clearInterval);
+  Object.keys(intervals).forEach(k => delete intervals[k]);
+  Object.keys(timers).forEach(k => delete timers[k]);
+
+  running = false;
+  document.getElementById('runBtn').textContent = '▶ Run All Scenarios';
+  document.getElementById('runBtn').disabled = false;
+
+  const usecases = ['autocomplete', 'chat', 'agent'];
+  const hws      = ['apple', 'amd64', 'amd128'];
+
+  usecases.forEach(uc => {
+    hws.forEach(hw => {
+      const id = `${uc}-${hw}`;
+      const outEl   = document.getElementById(`out-${id}`);
+      const progEl  = document.getElementById(`prog-${id}`);
+      const badgeEl = document.getElementById(`badge-${id}`);
+      const timeEl  = document.getElementById(`time-${id}`);
+      const tokcEl  = document.getElementById(`tokc-${id}`);
+      const scenEl  = document.getElementById(`s-${id}`);
+
+      outEl.innerHTML = '';
+      progEl.style.width = '0%';
+      badgeEl.className = 'badge waiting';
+      badgeEl.textContent = 'Waiting';
+      timeEl.className = 'time-display';
+      timeEl.textContent = '—';
+      tokcEl.textContent = '';
+      scenEl.classList.remove('completed');
+    });
+  });
+}
+</script>
+</body>
+</html>
